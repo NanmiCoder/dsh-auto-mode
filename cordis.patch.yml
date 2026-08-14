@@ -1,0 +1,22 @@
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      auto:
+        sandbox: danger-full-access
+        approval: ask
+        name: Auto
+        description: High-privilege execution with automatic safety classification and approval for risky actions.
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+- insert:
+    - id: auto-permission-mode
+      name: dsh-auto-mode
+      config: {}
