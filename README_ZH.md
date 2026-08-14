@@ -23,13 +23,10 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 
 ## 安装
 
-先安装最新版 DeepSeek Harness：
+> [!NOTE]
+> 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
 
-```sh
-npm install -g @deepseek-ai/dsh@latest
-```
-
-然后任选一种来源。
+任选一种插件来源。
 
 ### npm
 

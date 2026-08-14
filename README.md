@@ -23,13 +23,10 @@ Coding agents need broad access to build, test, and inspect a project without st
 
 ## Install
 
-Install the latest DeepSeek Harness first:
+> [!NOTE]
+> Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
 
-```sh
-npm install -g @deepseek-ai/dsh@latest
-```
-
-Then choose either source.
+Choose either plugin source.
 
 ### npm
 
