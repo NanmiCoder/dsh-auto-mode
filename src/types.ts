@@ -14,6 +14,13 @@ export interface ClassifierInput {
   readonly arguments: unknown
   readonly workspaceRoot: string
   readonly policyReason: string
+  /** Recent direct-human messages; repository, tool, plugin, and subagent text is excluded. */
+  readonly trustedUserMessages: readonly string[]
+  /** Current Harness route, used by the native classifier and ignored by external HTTP classifiers. */
+  readonly route?: {
+    readonly provider: string
+    readonly model: string
+  }
 }
 
 /** Valid independent classifier result. */

@@ -20,8 +20,12 @@ function ambiguous(reason: string): Assessment {
   return { decision: 'ask', reason, classifierEligible: true }
 }
 
-function authorization(reason: string): Assessment {
+function manualReview(reason: string): Assessment {
   return { decision: 'ask', reason, classifierEligible: false }
+}
+
+function semanticReview(reason: string): Assessment {
+  return { decision: 'ask', reason, classifierEligible: true }
 }
 
 function denied(reason: string): Assessment {
@@ -177,9 +181,17 @@ function buildOrTest(tokens: readonly string[]): boolean {
   return false
 }
 
+function versionProbe(tokens: readonly string[]): boolean {
+  const name = commandName(tokens[0] as string)
+  if (['node', 'python', 'python3', 'pnpm', 'npm', 'yarn', 'bun', 'git', 'cargo', 'rustc'].includes(name)) {
+    return tokens.length === 2 && ['--version', '-v', 'version'].includes(tokens[1]?.toLowerCase() ?? '')
+  }
+  return name === 'go' && tokens.length === 2 && tokens[1]?.toLowerCase() === 'version'
+}
+
 function readOnlyCommand(name: string, tokens: readonly string[], shell: ShellKind): boolean {
   if (shell === 'bash') {
-    if (['pwd', 'ls', 'rg', 'grep', 'head', 'tail', 'wc', 'stat', 'file', 'which', 'type'].includes(name)) return true
+    if (['pwd', 'ls', 'rg', 'grep', 'head', 'tail', 'cat', 'wc', 'od', 'du', 'stat', 'file', 'which', 'type'].includes(name)) return true
     if (name === 'sed') return tokens.includes('-n')
     if (name === 'git') return ['status', 'diff', 'log', 'show', 'rev-parse'].includes(tokens[1]?.toLowerCase() ?? '')
     return false
@@ -217,35 +229,36 @@ export function assessShell(
   const hard = hardDenyShellReason(source, shell, roots)
   if (hard !== undefined) return denied(hard)
   const parsed = parseSimpleCommand(source, shell)
-  if (parsed === undefined) return authorization(`${shell} command is not one static simple command`)
+  if (parsed === undefined) return manualReview(`${shell} command is not one static simple command`)
   const name = commandName(parsed.tokens[0] as string)
-  if (nestedInterpreter(name)) return authorization('nested shell execution requires manual review')
+  if (nestedInterpreter(name)) return manualReview('nested shell execution requires manual review')
 
   const deletion = deletionSpec(name, parsed.tokens, shell)
   if (deletion !== undefined) {
-    if (deletion.targets.length === 0) return ambiguous('deletion target could not be determined')
+    if (deletion.targets.length === 0) return manualReview('deletion target could not be determined')
     const paths = deletion.targets.map(path => normalizePath(path, roots.workspace, roots.home))
     if (paths.every(path => artifacts.has(owner, path, roots) && isArtifactArea(path, roots))) {
       return allowed(`delete exact session-created artifact${paths.length === 1 ? '' : 's'}: ${paths.join(', ')}`)
     }
-    return authorization(`deleting pre-session or unobserved data requires approval: ${paths.join(', ')}`)
+    return semanticReview(`deleting pre-session or unobserved data requires specific user authorization: ${paths.join(', ')}`)
   }
 
   if (readOnlyCommand(name, parsed.tokens, shell)) {
     return workspacePathsAreRoutine(parsed.tokens.slice(1), roots)
       ? allowed('static read-only command inside the workspace')
-      : authorization('read-only command references a protected or external path')
+      : semanticReview('read-only command references a protected or external path')
   }
+  if (versionProbe(parsed.tokens)) return allowed('static development-tool version probe')
   if (buildOrTest(parsed.tokens)) {
     return workspacePathsAreRoutine(parsed.tokens.slice(1), roots)
       ? allowed('recognized project build, test, or verification command')
-      : authorization('build or test command references a protected or external path')
+      : semanticReview('build or test command references a protected or external path')
   }
 
   const creation = creationSpec(name, parsed.tokens, shell, roots)
   if (creation !== undefined) {
     return creation.protected
-      ? authorization(`creating outside routine project content requires approval: ${creation.paths.join(', ')}`)
+      ? semanticReview(`creating outside routine project content requires specific user authorization: ${creation.paths.join(', ')}`)
       : allowed('create exact project-local artifacts', creation.paths)
   }
 
@@ -253,17 +266,17 @@ export function assessShell(
     const paths = explicitPaths(parsed.tokens.slice(1).filter(token => !token.startsWith('-')), roots)
     return paths.length > 0 && paths.every(path => isWithin(roots.workspace, path) && !isProtectedProjectPath(path, roots))
       ? allowed('static project-local file operation')
-      : authorization('file move/copy target is external, protected, or unclear')
+      : semanticReview('file move/copy target is external, protected, or unclear')
   }
 
   if (name === 'git' && ['reset', 'clean', 'commit', 'push', 'rebase', 'checkout', 'switch', 'branch', 'tag'].includes(parsed.tokens[1]?.toLowerCase() ?? '')) {
-    return authorization(`Git state-changing command requires approval: ${parsed.tokens.slice(0, 3).join(' ')}`)
+    return semanticReview(`Git state-changing command requires specific user authorization: ${parsed.tokens.slice(0, 3).join(' ')}`)
   }
   if (['curl', 'wget', 'invoke-webrequest', 'invoke-restmethod', 'ssh', 'scp', 'rsync'].includes(name)) {
-    return authorization(`external network operation requires approval: ${name}`)
+    return semanticReview(`external network operation requires specific user authorization when it writes or transmits data: ${name}`)
   }
   if (/^(?:dropdb|createdb|psql|mysql|mongosh|redis-cli|kubectl|terraform|ansible|systemctl|launchctl)$/.test(name)) {
-    return authorization(`database, service, or infrastructure operation requires approval: ${name}`)
+    return semanticReview(`database, service, or infrastructure operation requires specific user authorization: ${name}`)
   }
   return ambiguous(`unrecognized ${shell} command requires independent classification: ${name}`)
 }

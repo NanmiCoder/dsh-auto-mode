@@ -1,7 +1,24 @@
 {
-  "name": "dsh-auto-mode",
+  "name": "@nanmicoder/dsh-auto-mode",
   "version": "0.1.0",
   "description": "Fail-closed automatic permission policy for DeepSeek Harness",
+  "author": "程序员阿江(Relakkes) <relakkes@gmail.com>",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "permission",
+    "security",
+    "plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NanmiCoder/dsh-auto-mode.git"
+  },
+  "homepage": "https://github.com/NanmiCoder/dsh-auto-mode#readme",
+  "bugs": {
+    "url": "https://github.com/NanmiCoder/dsh-auto-mode/issues"
+  },
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -10,6 +27,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -17,19 +38,25 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "README_EN.md",
     "DESIGN.md"
   ],
   "scripts": {
     "clean": "rm -rf lib",
-    "typecheck": "tsc --noEmit",
-    "build": "pnpm run clean && tsc",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "build": "pnpm run clean && tsc && tsc -p tsconfig.client.json && tsdown",
     "test": "vitest run",
     "verify": "pnpm run typecheck && pnpm run build && pnpm run test && node scripts/verify-package.mjs",
-    "prepare": "pnpm run build"
+    "prepare": "pnpm run build",
+    "prepublishOnly": "pnpm verify"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
     }
   },
   "engines": {
@@ -37,8 +64,23 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-permission-presets": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-permission-presets": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
@@ -53,9 +95,15 @@
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@types/node": "^24.10.0",
+    "jsdom": "^26.1.0",
+    "tsdown": "0.22.2",
     "typescript": "^5.9.3",
     "vitest": "^4.0.17"
   },
   "packageManager": "pnpm@10.33.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "license": "MIT"
 }

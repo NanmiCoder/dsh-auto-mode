@@ -12,6 +12,10 @@ export interface RootOptions {
     readonly tempRoots?: readonly string[];
     readonly home?: string;
 }
+/** Collapse Win32/NT namespace aliases before any containment decision. */
+export declare function canonicalizeWindowsNamespace(input: string): string;
+/** Canonicalize macOS system symlink spellings without filesystem I/O. */
+export declare function canonicalizePosixSystemAlias(path: string, platform?: NodeJS.Platform): string;
 /** Normalize an absolute or cwd-relative user path without following links. */
 export declare function normalizePath(input: string, cwd: string, userHome?: string): string;
 /** Resolve runtime roots from the active workspace and current process environment. */

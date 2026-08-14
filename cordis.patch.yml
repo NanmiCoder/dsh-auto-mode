@@ -18,5 +18,5 @@
 
 - insert:
     - id: auto-permission-mode
-      name: dsh-auto-mode
+      name: '@nanmicoder/dsh-auto-mode'
       config: {}

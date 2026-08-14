@@ -12,6 +12,8 @@ describe('shell policy', () => {
     expect(assessShell('git status', 'bash', roots, artifacts, undefined).decision).toBe('allow')
     expect(assessShell('pnpm test', 'bash', roots, artifacts, undefined).decision).toBe('allow')
     expect(assessShell('Get-ChildItem .', 'pwsh', roots, artifacts, undefined).decision).toBe('allow')
+    expect(assessShell('pnpm --version', 'bash', roots, artifacts, undefined).decision).toBe('allow')
+    expect(assessShell('od -c output.txt', 'bash', roots, artifacts, undefined).decision).toBe('allow')
   })
 
   it('asks on dynamic, nested, or unrecognized syntax', () => {
@@ -35,7 +37,7 @@ describe('shell policy', () => {
   it('requires approval for pre-session deletion but allows exact live artifacts', () => {
     const artifacts = new ArtifactRegistry()
     const owner = {}
-    expect(assessShell('rm -rf scratch', 'bash', roots, artifacts, owner).decision).toBe('ask')
+    expect(assessShell('rm -rf scratch', 'bash', roots, artifacts, owner)).toMatchObject({ decision: 'ask', classifierEligible: true })
     const exec = { name: 'write', token: Symbol('write'), agent: { session: owner } } as unknown as ToolExecution
     const result = {
       isError: false,
@@ -49,6 +51,6 @@ describe('shell policy', () => {
   it('never treats model justification or external text as authorization', () => {
     const artifacts = new ArtifactRegistry()
     const result = assessShell('git push --force origin main', 'bash', roots, artifacts, undefined)
-    expect(result).toMatchObject({ decision: 'ask', classifierEligible: false })
+    expect(result).toMatchObject({ decision: 'ask', classifierEligible: true })
   })
 })

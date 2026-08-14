@@ -27,18 +27,63 @@ function pathApi(style: PathStyle): typeof posix | typeof win32 {
   return style === 'win32' ? win32 : posix
 }
 
+function normalizeWindowsSegments(path: string): string {
+  const root = win32.parse(path).root
+  const tail = path.slice(root.length)
+    .split('\\')
+    .map(segment => segment.replace(/[ .]+$/g, ''))
+    .join('\\')
+  return tail === '' ? root : `${root}${tail}`
+}
+
+function windowsDeviceNamespaceReason(input: string): string | undefined {
+  const path = input.replaceAll('/', '\\').toLowerCase()
+  if (path.startsWith('\\\\.\\')) return `Windows device namespace ${input}`
+  if (path.startsWith('\\device\\') || path.startsWith('\\global??\\') || path.startsWith('\\dosdevices\\')) {
+    return `Windows NT object namespace ${input}`
+  }
+  if (path.startsWith('\\\\?\\') && !/^\\\\\?\\(?:unc\\|[a-z]:\\)/.test(path)) {
+    return `Windows extended device namespace ${input}`
+  }
+  if ((path.startsWith('\\??\\') || path.startsWith('\\\\??\\'))
+    && !/^(?:\\\?\?\\|\\\\\?\?\\)(?:unc\\|[a-z]:\\)/.test(path)) {
+    return `Windows NT device namespace ${input}`
+  }
+  return undefined
+}
+
+/** Collapse Win32/NT namespace aliases before any containment decision. */
+export function canonicalizeWindowsNamespace(input: string): string {
+  const lower = input.toLowerCase()
+  if (lower.startsWith('\\\\?\\unc\\')) return `\\\\${input.slice(8)}`
+  if (lower.startsWith('\\\\?\\')) return input.slice(4)
+  if (lower.startsWith('\\\\??\\')) return input.slice(5)
+  if (lower.startsWith('\\??\\')) return input.slice(4)
+  return input
+}
+
+/** Canonicalize macOS system symlink spellings without filesystem I/O. */
+export function canonicalizePosixSystemAlias(path: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'darwin') return path
+  for (const alias of ['/tmp', '/var', '/etc']) {
+    if (path === alias || path.startsWith(`${alias}/`)) return `/private${path}`
+  }
+  return path
+}
+
 /** Normalize an absolute or cwd-relative user path without following links. */
 export function normalizePath(input: string, cwd: string, userHome = homedir()): string {
-  const expanded = input === '~'
+  const canonicalInput = canonicalizeWindowsNamespace(input)
+  const expanded = canonicalInput === '~'
     ? userHome
-    : input.startsWith('~/') || input.startsWith('~\\')
-      ? pathApi(styleOf(userHome)).join(userHome, input.slice(2))
-      : input
+    : canonicalInput.startsWith('~/') || canonicalInput.startsWith('~\\')
+      ? pathApi(styleOf(userHome)).join(userHome, canonicalInput.slice(2))
+      : canonicalInput
   const style = styleOf(expanded, cwd)
   const api = pathApi(style)
   const absolute = api.isAbsolute(expanded) ? expanded : api.resolve(cwd, expanded)
   const normalized = api.normalize(absolute)
-  return style === 'win32' ? normalized.toLowerCase() : normalized
+  return style === 'win32' ? normalizeWindowsSegments(normalized).toLowerCase() : canonicalizePosixSystemAlias(normalized)
 }
 
 /** Resolve runtime roots from the active workspace and current process environment. */
@@ -73,12 +118,13 @@ export function isFilesystemRoot(target: string): boolean {
 /** Whether a target belongs to an operating-system or credential-critical tree. */
 export function isCriticalPath(target: string, roots: PolicyRoots): boolean {
   const normalized = normalizePath(target, roots.workspace, roots.home)
+  const windowsCritical = /^[a-z]:\\(?:windows|window~\d+|program files|program files \(x86\)|programdata|progra~\d+|boot)(?:\\|$)/i.test(normalized)
   const critical = styleOf(normalized) === 'win32'
-    ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata', 'c:\\boot']
+    ? []
     : ['/etc', '/bin', '/sbin', '/usr', '/system', '/library', '/private/etc', '/boot']
   const credentialRoots = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.config/gcloud']
     .map(path => normalizePath(path, roots.home, roots.home))
-  return [...critical, ...credentialRoots].some(root => isWithin(root, normalized))
+  return windowsCritical || [...critical, ...credentialRoots].some(root => isWithin(root, normalized))
 }
 
 /** Whether a workspace path is protected metadata rather than ordinary project content. */
@@ -96,8 +142,19 @@ export function isProtectedProjectPath(target: string, roots: PolicyRoots): bool
 
 /** Deterministic destructive-target fuse. */
 export function hardDestructiveTargetReason(target: string, roots: PolicyRoots): string | undefined {
+  const namespaceReason = windowsDeviceNamespaceReason(target)
+  if (namespaceReason !== undefined) return namespaceReason
+  const canonicalTarget = canonicalizeWindowsNamespace(target)
+  if (/^[A-Za-z]:(?![\\/])/.test(canonicalTarget)) return `ambiguous Windows drive-relative path ${canonicalTarget}`
   const normalized = normalizePath(target, roots.workspace, roots.home)
   if (isFilesystemRoot(normalized)) return `filesystem root ${normalized}`
+  if (styleOf(normalized) === 'win32') {
+    const hasReservedDevice = normalized.split(/[\\/]/).some((segment) => {
+      const base = segment.replace(/[ .]+$/g, '').split('.')[0]
+      return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base ?? '')
+    })
+    if (hasReservedDevice) return `Windows reserved device path ${normalized}`
+  }
   if (normalized === roots.home) return `user home root ${normalized}`
   if (isWithin(roots.dshHome, normalized)) return `DSH_HOME path ${normalized}`
   if (isCriticalPath(normalized, roots)) return `system or credential-critical path ${normalized}`

@@ -15,6 +15,7 @@ afterEach(async () => {
 describe('plugin lifecycle', () => {
   it('removes its monotonic guard and listeners on fiber disposal', async () => {
     context = new Context()
+    context.provide('llm', { stream: () => (async function* () {})() })
     await context.plugin(SystemPrompt)
     await context.plugin(ToolRuntime)
     let calls = 0

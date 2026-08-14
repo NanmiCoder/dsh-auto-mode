@@ -35,20 +35,93 @@ function containsCredentialMaterial(argumentsValue: unknown): boolean {
     .test(serializedArguments(argumentsValue))
 }
 
+const DESTRUCTIVE_TOOL = /(?:^|[_-])(?:delete|destroy|remove|erase|purge|drop|truncate|wipe|unlink|rmdir|reset|revoke)(?:$|[_-])/i
+const EXTERNAL_WRITE_TOOL = /(?:^|[_-])(?:deploy|publish|push|upload|send|post|release|merge|submit|create[-_]?(?:issue|pull[-_]?request))(?:$|[_-])/i
+const SECURITY_CHANGE_TOOL = /(?:^|[_-])(?:chmod|chown|permission|permissions|policy|grant|revoke|role|credential|credentials|secret|secrets|auth)(?:$|[_-])/i
+
+function riskyPluginToolReason(name: string): string | undefined {
+  if (DESTRUCTIVE_TOOL.test(name)) return `registered tool name indicates a destructive operation: ${name}`
+  if (EXTERNAL_WRITE_TOOL.test(name)) return `registered tool name indicates an external write: ${name}`
+  if (SECURITY_CHANGE_TOOL.test(name)) return `registered tool name indicates a security-boundary change: ${name}`
+  return undefined
+}
+
+/** Exact, audited session/control-plane tools whose effects stay in Harness state. */
+const SESSION_STATE_TOOLS = new Set([
+  'ask_user_question',
+  'todo_write',
+  'get_goal',
+  'create_goal',
+  'update_goal',
+  'exit_plan_mode',
+  'skill',
+  'report',
+])
+
+/** Read-only tools backed by owner/workspace-authorized Harness services. */
+const HARNESS_READ_TOOLS = new Set([
+  'job_output',
+  'job_list',
+  'schedule_list',
+  'session_search',
+  'session_event_search',
+  'session_trace',
+  'session_event_trace',
+  'session_event_read',
+  'terminal_read',
+  'terminal_list',
+  'cordis_inspect_list',
+  'cordis_inspect_query',
+  'cordis_inspect_self',
+])
+
+/** Lifecycle controls that stop only owner-scoped background work. */
+const OWNER_CONTROL_TOOLS = new Set([
+  'job_kill',
+  'terminal_signal',
+  'terminal_close',
+])
+
+/**
+ * Audited AgentTeams control calls. These mutate only workspace-local team
+ * coordination state. Member file/shell calls are separate tool executions
+ * and inherit Auto from their captain in the runtime integration.
+ */
+const AGENT_TEAMS_CONTROL_TOOLS = new Set([
+  'agent_teams_create',
+  'agent_teams_add_member',
+  'agent_teams_remove_member',
+  'agent_teams_create_task',
+  'agent_teams_claim_task',
+  'agent_teams_update_task',
+  'agent_teams_send_message',
+  'agent_teams_status',
+  // The verified implementation archives team state instead of erasing it.
+  'agent_teams_delete',
+])
+
 /** Synchronous hard-deny reason suitable for the monotonic tool guard. */
 export function hardDenyReason(exec: Readonly<ToolExecution>, roots: PolicyRoots): string | undefined {
   const args = record(exec.arguments)
-  if (/^(?:web_fetch|send_|upload|post_|publish|deploy|curl|wget)/i.test(exec.name) && containsCredentialMaterial(exec.arguments)) {
+  if ((/^(?:web_fetch|curl|wget)/i.test(exec.name) || EXTERNAL_WRITE_TOOL.test(exec.name)) && containsCredentialMaterial(exec.arguments)) {
     return 'external call contains credential or private-key material'
   }
   if ((exec.name === 'bash' || exec.name === 'pwsh') && typeof args?.command === 'string') {
     return hardDenyShellReason(args.command, exec.name, roots)
   }
-  if (['write', 'edit', 'apply_patch'].includes(exec.name)) {
+  if (['write', 'edit', 'apply_patch'].includes(exec.name)
+    || (exec.name === 'str_replace_editor' && args?.command !== 'view')) {
     const path = pathArgument(args)
     if (path !== undefined) {
-      const reason = hardDestructiveTargetReason(normalizePath(path, roots.workspace, roots.home), roots)
+      const reason = hardDestructiveTargetReason(path, roots)
       if (reason !== undefined) return `mutation targets ${reason}`
+    }
+  }
+  if (DESTRUCTIVE_TOOL.test(exec.name)) {
+    const path = pathArgument(args)
+    if (path !== undefined) {
+      const reason = hardDestructiveTargetReason(path, roots)
+      if (reason !== undefined) return `destructive plugin tool targets ${reason}`
     }
   }
   return undefined
@@ -75,7 +148,7 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     const normalized = normalizePath(path, roots.workspace, roots.home)
     return isWithin(roots.workspace, normalized)
       ? { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
-      : { decision: 'ask', reason: `reading outside the workspace requires approval: ${normalized}`, classifierEligible: false }
+      : { decision: 'ask', reason: `reading outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
   }
 
   if (exec.name === 'write' || exec.name === 'edit') {
@@ -83,19 +156,65 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     if (path === undefined) return { decision: 'ask', reason: `${exec.name} target path is missing`, classifierEligible: false }
     const normalized = normalizePath(path, roots.workspace, roots.home)
     if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
-      return { decision: 'ask', reason: `mutation of external or protected path requires approval: ${normalized}`, classifierEligible: false }
+      return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
     }
     return { decision: 'allow', reason: 'routine project-local file edit', classifierEligible: false }
+  }
+
+
+  if (exec.name === 'str_replace_editor') {
+    const command = args?.command
+    const path = typeof args?.path === 'string' ? args.path : undefined
+    if (!['view', 'create', 'str_replace', 'insert'].includes(String(command))) {
+      return { decision: 'ask', reason: 'str_replace_editor command is missing or invalid', classifierEligible: false }
+    }
+    if (path === undefined) {
+      return { decision: 'ask', reason: 'str_replace_editor target path is missing', classifierEligible: false }
+    }
+    const normalized = normalizePath(path, roots.workspace, roots.home)
+    if (command === 'view') {
+      return isWithin(roots.workspace, normalized)
+        ? { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
+        : { decision: 'ask', reason: `reading outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+    }
+    if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
+      return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
+    }
+    return { decision: 'allow', reason: 'routine project-local file edit', classifierEligible: false }
+  }
+
+  if (SESSION_STATE_TOOLS.has(exec.name)) {
+    return { decision: 'allow', reason: 'trusted Harness session-state operation', classifierEligible: false }
+  }
+  if (HARNESS_READ_TOOLS.has(exec.name)) {
+    return { decision: 'allow', reason: 'trusted read-only Harness operation', classifierEligible: false }
+  }
+  if (AGENT_TEAMS_CONTROL_TOOLS.has(exec.name)) {
+    return { decision: 'allow', reason: 'trusted AgentTeams coordination operation', classifierEligible: false }
+  }
+  if (OWNER_CONTROL_TOOLS.has(exec.name)) {
+    return { decision: 'allow', reason: 'trusted owner-scoped lifecycle control', classifierEligible: false }
+  }
+
+  // Persistent terminals retain cwd, environment, aliases, and interpreter
+  // state across calls. A standalone text fragment cannot be parsed with the
+  // same guarantees as one Bash/PowerShell invocation, so never fast-path it.
+  if (exec.name === 'terminal_open' || exec.name === 'terminal_send') {
+    return { decision: 'ask', reason: 'stateful terminal execution requires explicit approval', classifierEligible: false }
   }
 
   if (['web_search', 'web_fetch', 'time', 'weather'].includes(exec.name)) {
     return { decision: 'allow', reason: 'read-only external information lookup', classifierEligible: false }
   }
-  if (['spawn_agent', 'send_message', 'wait_agent', 'list_agents', 'read_thread', 'wait_threads'].includes(exec.name)) {
+  if (['subagent', 'workflow', 'ralph', 'spawn_agent', 'send_message', 'wait_agent', 'list_agents', 'interrupt_agent', 'read_thread', 'wait_threads'].includes(exec.name)) {
     return { decision: 'allow', reason: 'orchestration call; child tool actions remain independently checked', classifierEligible: false }
   }
   if (['git_push', 'deploy', 'publish', 'send_email', 'create_issue', 'create_pull_request'].includes(exec.name)) {
-    return { decision: 'ask', reason: `external write requires approval: ${exec.name}`, classifierEligible: false }
+    return { decision: 'ask', reason: `external write requires specific user authorization: ${exec.name}`, classifierEligible: true }
   }
-  return { decision: 'ask', reason: `unknown tool requires independent classification: ${exec.name}`, classifierEligible: true }
+  const riskyReason = riskyPluginToolReason(exec.name)
+  if (riskyReason !== undefined) {
+    return { decision: 'ask', reason: riskyReason, classifierEligible: true }
+  }
+  return { decision: 'allow', reason: `ordinary registered plugin tool: ${exec.name}`, classifierEligible: false }
 }
