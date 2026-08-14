@@ -50,7 +50,7 @@ dsh --profile web --dump-config
 dsh web
 ```
 
-Refresh the Web UI and select **Auto** between Workspace Write and Full access. Replace `web` with another profile name when that is the profile you run.
+Refresh the Web UI, select **Auto** between Workspace Write and Full access, and acknowledge the risk notice. Replace `web` with another profile name when that is the profile you run.
 
 ## Permission modes
 
@@ -101,7 +101,7 @@ See [DESIGN.md](./DESIGN.md) for the complete decision order, threat model, Wind
 
 ## Security boundaries
 
-The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The Auto glyph is a compatibility decoration for the tested DSH Web UI; the Host policy and `/permission auto` continue to work if the upstream menu markup changes.
+The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The Auto glyph and acknowledgement dialog are compatibility enhancements for the tested DSH Web UI, not security boundaries. Direct `/permission auto` calls do not show the Web dialog, and upstream menu markup changes may hide both enhancements; the Host policy still applies whenever the Session preset is `auto`.
 
 ## Development
 

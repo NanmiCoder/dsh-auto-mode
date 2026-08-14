@@ -50,7 +50,7 @@ dsh --profile web --dump-config
 dsh web
 ```
 
-刷新 Web UI，在 Workspace Write 与 Full access 之间选择 **Auto**。如果实际运行的是其他 Profile，请把 `web` 替换为对应名称。
+刷新 Web UI，在 Workspace Write 与 Full access 之间选择 **Auto**，并确认风险提示。如果实际运行的是其他 Profile，请把 `web` 替换为对应名称。
 
 ## 权限模式
 
@@ -101,7 +101,7 @@ Auto 保留 Full access 的执行范围，但独立判断每一次工具调用�
 
 ## 安全边界
 
-插件无法拦截加载前执行的包生命周期脚本、绕开 `ctx.tools` 的 Node 文件系统/进程调用、被攻破的 Harness Runtime 或在 Harness 外部启动的命令。Auto 图标只是针对已测试 DSH Web UI 的兼容装饰；即使上游菜单 DOM 变化，Host 策略与 `/permission auto` 仍然有效。
+插件无法拦截加载前执行的包生命周期脚本、绕开 `ctx.tools` 的 Node 文件系统/进程调用、被攻破的 Harness Runtime 或在 Harness 外部启动的命令。Auto 图标与风险确认弹窗只是针对已测试 DSH Web UI 的兼容增强，不是安全边界。直接执行 `/permission auto` 不会显示 Web 弹窗；上游菜单 DOM 变化也可能让两项增强失效，但只要 Session preset 为 `auto`，Host 策略仍会生效。
 
 ## 开发
 
