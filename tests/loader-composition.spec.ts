@@ -158,7 +158,15 @@ describe('real Cordis Loader composition', () => {
     const delegatedAgent = {
       session: {
         header: { id: 'child', cwd: root, origin: 'subagent', parentSession: 'session-auto' },
-        events: [],
+        // Match the official spawn/continuable persistence shape. The child
+        // does not carry Auto directly: DSH derives danger-full-access from
+        // its delegated sandbox + approval=never knobs, and this plugin must
+        // still resolve Auto from the live parentSession authority.
+        events: [
+          { type: 'sandbox/mode', data: { mode: 'danger-full-access', source: 'delegation' } },
+          { type: 'approval/policy', data: { policy: 'never', source: 'delegation' } },
+          { type: 'permission/preset', data: { preset: 'danger-full-access' } },
+        ],
       },
     } as unknown as NonNullable<ToolExecutionInput['agent']>
     const run = (id: string, command: string, preset = 'auto') => context!.tools.execute({

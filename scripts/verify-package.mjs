@@ -33,10 +33,10 @@ if (manifest.exports?.['./client']?.default !== './lib/client.js'
 if (manifest.dsh?.bundle?.patch !== './cordis.patch.yml') {
   throw new Error('bundle patch declaration is missing or incorrect')
 }
-for (const path of ['./lib/index.js', './lib/index.d.ts', './lib/client.js', './lib/client.js.map', './lib/client/index.d.ts', './cordis.patch.yml', './README.md', './README_EN.md', './DESIGN.md']) {
+for (const path of ['./lib/index.js', './lib/index.d.ts', './lib/client.js', './lib/client.js.map', './lib/client/index.d.ts', './assets/readme/hero.svg', './cordis.patch.yml', './README.md', './README_ZH.md', './DESIGN.md']) {
   await access(resolve(root, path))
 }
-for (const entry of ['lib', 'cordis.patch.yml', 'README.md', 'README_EN.md', 'DESIGN.md']) {
+for (const entry of ['lib', 'assets/readme/hero.svg', 'cordis.patch.yml', 'README.md', 'README_ZH.md', 'DESIGN.md']) {
   if (!manifest.files?.includes(entry)) throw new Error(`npm files[] is missing ${entry}`)
 }
 const clientBundle = await readFile(resolve(root, 'lib/client.js'), 'utf8')

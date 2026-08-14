@@ -14,14 +14,18 @@ function execution(...presets: string[]): ToolExecution {
   } as unknown as ToolExecution
 }
 
-function child(parentSession: string): ToolExecution {
+function child(parentSession: string, ...presets: string[]): ToolExecution {
   return {
     name: 'bash',
     token: Symbol('child'),
     agent: {
       session: {
         header: { origin: 'subagent', parentSession },
-        events: [],
+        events: [
+          { type: 'sandbox/mode', data: { mode: 'danger-full-access', source: 'delegation' } },
+          { type: 'approval/policy', data: { policy: 'never', source: 'delegation' } },
+          ...presets.map(preset => ({ type: 'permission/preset', data: { preset } })),
+        ],
       },
     },
   } as unknown as ToolExecution
@@ -45,15 +49,19 @@ describe('Auto permission activation', () => {
     const autoParent = execution('auto').agent
     const fullParent = execution('danger-full-access').agent
     const lookup = (id: string) => id === 'auto-parent' ? autoParent : id === 'full-parent' ? fullParent : undefined
-    expect(isAutoOrDelegatedPermissionExecution(child('auto-parent'), lookup)).toBe(true)
+    // This is the real persisted shape of an AgentTeams/Workflow spawn child:
+    // DSH pins its knobs to full-access + never while Auto remains authority
+    // from the direct live parent.
+    expect(isAutoPermissionExecution(child('auto-parent', 'danger-full-access'))).toBe(false)
+    expect(isAutoOrDelegatedPermissionExecution(child('auto-parent', 'danger-full-access'), lookup)).toBe(true)
     expect(isAutoOrDelegatedPermissionExecution(child('full-parent'), lookup)).toBe(false)
     expect(isAutoOrDelegatedPermissionExecution(child('missing'), lookup)).toBe(false)
   })
 
   it('inherits Auto across nested live subagents and rejects lineage cycles', () => {
     const autoParent = execution('auto').agent
-    const middle = child('auto-parent').agent
-    const nested = child('middle')
+    const middle = child('auto-parent', 'danger-full-access').agent
+    const nested = child('middle', 'danger-full-access')
     const lookup = (id: string) => id === 'auto-parent' ? autoParent : id === 'middle' ? middle : undefined
     expect(isAutoOrDelegatedPermissionExecution(nested, lookup)).toBe(true)
 

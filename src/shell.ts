@@ -284,6 +284,15 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
       index += operator.length - 1
       continue
     }
+    if (char === '{' && input[index + 1] === '}' && !started && (input[index + 2] === undefined || /\s/.test(input[index + 2] as string))) {
+      // `find -exec ... {} \;` uses an exact literal placeholder. It is not
+      // brace expansion, and treating it as one made routine read-only
+      // inspection impossible. Other braces remain opaque.
+      text = '{}'
+      started = true
+      index += 1
+      continue
+    }
     if ('(){}'.includes(char)) return opaque('shell grouping or brace expansion cannot be read statically')
     if (char === '*' || char === '?') {
       glob = true
@@ -417,14 +426,50 @@ function unwrapCommand(words: readonly CommandWord[]): UnwrappedCommand {
   return { words: current, dynamicInput }
 }
 
-/** Commands that execute code this policy cannot inspect at all. */
-function nestedInterpreter(name: string, words: readonly CommandWord[]): boolean {
-  if (['sh', 'bash', 'zsh', 'fish', 'ksh', 'dash', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe',
-    'eval', 'exec', 'source', '.', 'iex', 'invoke-expression', 'invoke-command', 'start-process'].includes(name)) return true
+interface NestedExecution {
+  /** Inline source is visible to the independent classifier. */
+  readonly source?: string
+}
+
+/** Describe an interpreter boundary and whether its inline source is visible. */
+function nestedExecution(name: string, words: readonly CommandWord[]): NestedExecution | undefined {
   if (['node', 'deno', 'bun', 'python', 'python3', 'perl', 'ruby', 'php', 'osascript'].includes(name)) {
-    return words.slice(1).some(word => /^(?:-c|-e|-E|--eval|--exec|--command|--print)$/.test(word.text))
+    const index = words.findIndex((word, wordIndex) => wordIndex > 0 && /^(?:-c|-e|-E|--eval|--exec|--command|--print)$/.test(word.text))
+    if (index >= 0) return { ...(words[index + 1] === undefined ? {} : { source: (words[index + 1] as CommandWord).text }) }
+    return undefined
+  }
+  if (['sh', 'bash', 'zsh', 'fish', 'ksh', 'dash', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(name)) {
+    const index = words.findIndex((word, wordIndex) => wordIndex > 0 && /^(?:-c|\/c|--command)$/.test(word.text))
+    return { ...(index < 0 || words[index + 1] === undefined ? {} : { source: (words[index + 1] as CommandWord).text }) }
+  }
+  if (['eval', 'iex', 'invoke-expression'].includes(name)) {
+    return { ...(words.length < 2 ? {} : { source: words.slice(1).map(word => word.text).join(' ') }) }
+  }
+  if (['exec', 'source', '.', 'invoke-command', 'start-process'].includes(name)) return {}
+  return undefined
+}
+
+const PYTHON_IMPORT = /^(?:import\s+[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\s+as\s+[A-Za-z_]\w*)?(?:\s*,\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\s+as\s+[A-Za-z_]\w*)?)*|from\s+[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s+import\s+(?:[A-Za-z_*]\w*(?:\s+as\s+[A-Za-z_]\w*)?)(?:\s*,\s*[A-Za-z_*]\w*(?:\s+as\s+[A-Za-z_]\w*)?)*)$/
+const PYTHON_PRINT_VALUE = String.raw`(?:'[^'\n]*'|"[^"\n]*"|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|[-+]?\d+(?:\.\d+)?)`
+const PYTHON_SAFE_PRINT = new RegExp(String.raw`^print\(\s*${PYTHON_PRINT_VALUE}(?:\s*,\s*${PYTHON_PRINT_VALUE})*\s*\)$`)
+
+/** Common package/version probes are safe enough to avoid a model round trip. */
+function routineInlineProbe(name: string, source: string | undefined): boolean {
+  if (source === undefined) return false
+  if (name === 'python' || name === 'python3') {
+    const statements = source.split(/[;\n]+/).map(statement => statement.trim()).filter(Boolean)
+    return statements.length > 0 && statements.every(statement => PYTHON_IMPORT.test(statement) || PYTHON_SAFE_PRINT.test(statement))
+  }
+  if (['node', 'bun', 'deno'].includes(name)) {
+    const compact = source.trim().replace(/;$/, '')
+    return /^(?:require(?:\.resolve)?\(\s*(['"])[@A-Za-z0-9_./-]+\1\s*\)|console\.log\(\s*process\.version\s*\))$/.test(compact)
   }
   return false
+}
+
+/** Deletion hidden behind an interpreter stays outside classifier authority. */
+function destructiveNestedSource(source: string): boolean {
+  return /(?:^|[\s;&|()])(?:rm|rmdir|unlink|shred|remove-item|del|erase)(?:\s|$)|\b(?:shutil\.rmtree|os\.(?:remove|unlink|rmdir|removedirs)|file\.(?:delete|unlink)|directory\.delete)\s*\(|\.(?:rm|rmsync|unlink|unlinksync|rmdir|rmdirsync|delete)\s*\(|\b(?:delete\s+from|drop\s+(?:table|database)|truncate\s+table)\b/i.test(source)
 }
 
 function explicitPaths(words: readonly CommandWord[], roots: PolicyRoots): string[] {
@@ -435,8 +480,10 @@ function explicitPaths(words: readonly CommandWord[], roots: PolicyRoots): strin
     .map(token => normalizePath(token, roots.workspace, roots.home))
 }
 
-function workspacePathsAreRoutine(words: readonly CommandWord[], roots: PolicyRoots): boolean {
-  return explicitPaths(words, roots).every(path => isWithin(roots.workspace, path) && !isProtectedProjectPath(path, roots))
+function readPathsAreRoutine(words: readonly CommandWord[], roots: PolicyRoots): boolean {
+  return explicitPaths(words, roots).every(path =>
+    (isWithin(roots.workspace, path) && !isProtectedProjectPath(path, roots))
+    || roots.tempRoots.some(root => isWithin(root, path)))
 }
 
 /** Every redirection target must be a discard sink or ordinary project content. */
@@ -468,7 +515,7 @@ function buildOrTest(words: readonly CommandWord[]): boolean {
 function versionProbe(words: readonly CommandWord[]): boolean {
   const tokens = words.map(word => word.text)
   const name = commandName(tokens[0] as string)
-  if (['node', 'python', 'python3', 'pnpm', 'npm', 'yarn', 'bun', 'git', 'cargo', 'rustc'].includes(name)) {
+  if (['node', 'python', 'python3', 'pip', 'pip3', 'pnpm', 'npm', 'yarn', 'bun', 'git', 'cargo', 'rustc'].includes(name)) {
     return tokens.length === 2 && ['--version', '-v', 'version'].includes(tokens[1]?.toLowerCase() ?? '')
   }
   return name === 'go' && tokens.length === 2 && tokens[1]?.toLowerCase() === 'version'
@@ -493,12 +540,61 @@ const PWSH_READ_ONLY = [
   'write-output', 'write-host', 'measure-object', 'select-object', 'sort-object', 'get-date',
 ]
 
+const FIND_MUTATING_ACTION = /^-(?:delete|fprint|fprintf|fls)$/
+const FIND_NESTED_ACTION = /^-(?:exec|execdir|ok|okdir)$/
+
+function findSearchRoots(words: readonly CommandWord[]): readonly CommandWord[] {
+  const roots: CommandWord[] = []
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index] as CommandWord
+    if (word.text.startsWith('-') || word.text === '!' || word.text === '(') break
+    roots.push(word)
+  }
+  return roots
+}
+
+function findHasDestructiveAction(words: readonly CommandWord[]): boolean {
+  for (let index = 1; index < words.length; index += 1) {
+    const token = (words[index] as CommandWord).text.toLowerCase()
+    if (token === '-delete') return true
+    if (!FIND_NESTED_ACTION.test(token)) continue
+    const terminator = words.findIndex((word, nestedIndex) => nestedIndex > index && (word.text === ';' || word.text === '+'))
+    if (terminator < 0) return false
+    const nested = words.slice(index + 1, terminator)
+    const nestedName = commandName(nested[0]?.text ?? '')
+    if (deletionSpec(nestedName, nested, 'bash') !== undefined
+      || destructiveNestedSource(nested.map(word => word.text).join(' '))) return true
+    index = terminator
+  }
+  return false
+}
+
+/** `find -exec` is read-only only when every nested command is itself read-only. */
+function findActionsAreReadOnly(words: readonly CommandWord[]): boolean {
+  for (let index = 1; index < words.length; index += 1) {
+    const token = (words[index] as CommandWord).text.toLowerCase()
+    if (FIND_MUTATING_ACTION.test(token) || /^(?:-execdir|-ok|-okdir)$/.test(token)) return false
+    if (token !== '-exec') continue
+    const terminator = words.findIndex((word, nestedIndex) => nestedIndex > index && (word.text === ';' || word.text === '+'))
+    if (terminator < 0) return false
+    const nested = words.slice(index + 1, terminator)
+    const nestedName = commandName(nested[0]?.text ?? '')
+    const nestedReadOnly = BASH_READ_ONLY.includes(nestedName)
+      || (nestedName === 'sed' && nested.some(word => word.text === '-n'))
+      || (nestedName === 'git' && ['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame'].includes(nested[1]?.text.toLowerCase() ?? ''))
+      || versionProbe(nested)
+    if (!nestedReadOnly) return false
+    index = terminator
+  }
+  return true
+}
+
 function readOnlyCommand(name: string, words: readonly CommandWord[], shell: ShellKind): boolean {
   const tokens = words.map(word => word.text)
   if (shell === 'bash') {
     if (BASH_READ_ONLY.includes(name)) return true
     if (name === 'sed') return tokens.includes('-n')
-    if (name === 'find') return !tokens.some(token => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)$/.test(token))
+    if (name === 'find') return findActionsAreReadOnly(words)
     if (name === 'git') return ['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame'].includes(tokens[1]?.toLowerCase() ?? '')
     return false
   }
@@ -542,6 +638,17 @@ function segmentHardDenyReason(segment: ShellSegment, shell: ShellKind, roots: P
   }
   const unwrapped = unwrapCommand(segment.words)
   const name = commandName(unwrapped.words[0]?.text ?? '')
+  if (name === 'find' && findHasDestructiveAction(unwrapped.words)) {
+    const rootsToCheck = findSearchRoots(unwrapped.words)
+    for (const target of rootsToCheck) {
+      if (target.dynamic) {
+        if (dynamicHomeTarget(target.text)) return 'dynamic find deletion targeting the user home is not permitted'
+        continue
+      }
+      const reason = hardDestructiveTargetReason(globRoot(target.text), roots)
+      if (reason !== undefined) return `destructive find operation targets ${reason}`
+    }
+  }
   const deletion = deletionSpec(name, unwrapped.words, shell)
   if (deletion === undefined) return undefined
   for (const target of deletion.targets) {
@@ -605,7 +712,13 @@ function assessSegment(
   const unwrapped = unwrapCommand(segment.words)
   const words = unwrapped.words
   const name = commandName((words[0] as CommandWord).text)
-  if (nestedInterpreter(name, words)) return manualReview('nested shell or inline-code execution requires manual review')
+  const nested = nestedExecution(name, words)
+  if (nested !== undefined) {
+    if (routineInlineProbe(name, nested.source)) return allowed('routine inline package or version probe')
+    if (nested.source === undefined) return manualReview('opaque nested execution requires manual review')
+    if (destructiveNestedSource(nested.source)) return manualReview('nested deletion requires manual review')
+    return semanticReview('visible nested or inline-code execution requires independent classification')
+  }
 
   const base = classifyEffectiveCommand(name, words, segment, shell, roots, artifacts, owner, unwrapped.dynamicInput)
   if (base.decision !== 'allow' || writeTargetsAreRoutine(segment, shell, roots)) return base
@@ -642,14 +755,20 @@ function classifyEffectiveCommand(
 
   if (dynamicInput) return ambiguous(`operands arrive from piped input and require independent classification: ${name}`)
 
+  if (name === 'find' && !findActionsAreReadOnly(words)) {
+    return semanticReview(findHasDestructiveAction(words)
+      ? 'find deletion requires specific user authorization'
+      : 'find executes or writes through a non-read-only action and requires independent classification')
+  }
+
   if (readOnlyCommand(name, words, shell)) {
-    return workspacePathsAreRoutine(operands, roots)
-      ? allowed('static read-only command inside the workspace')
+    return readPathsAreRoutine(operands, roots)
+      ? allowed('static read-only command inside the workspace or temporary area')
       : semanticReview('read-only command references a protected or external path')
   }
   if (versionProbe(words)) return allowed('static development-tool version probe')
   if (buildOrTest(words)) {
-    return workspacePathsAreRoutine(operands, roots)
+    return readPathsAreRoutine(operands, roots)
       ? allowed('recognized project build, test, or verification command')
       : semanticReview('build or test command references a protected or external path')
   }
@@ -688,9 +807,8 @@ function classifyEffectiveCommand(
  * Classify one Bash or PowerShell call after hard-deny evaluation.
  *
  * A compound line is assessed segment by segment. Syntax alone never blocks
- * semantic classification: only a segment this policy cannot read statically —
- * a nested interpreter, a dynamic destructive target, or an opaque construct —
- * falls back to one-shot human approval.
+ * semantic classification. Only destructive targets hidden behind dynamic or
+ * opaque execution stay on the one-shot human approval path.
  */
 export function assessShell(
   source: string,
@@ -703,7 +821,9 @@ export function assessShell(
   if (hard !== undefined) return denied(hard)
   const decomposition = decomposeCommandLine(source, shell)
   if (decomposition.kind === 'opaque') {
-    return manualReview(`${shell} command cannot be read statically: ${decomposition.reason}`)
+    return destructiveNestedSource(source)
+      ? manualReview(`${shell} destructive command cannot be read statically: ${decomposition.reason}`)
+      : semanticReview(`${shell} command requires independent classification because it cannot be read statically: ${decomposition.reason}`)
   }
 
   const assessments = decomposition.segments.map(segment => assessSegment(segment, shell, roots, artifacts, owner))

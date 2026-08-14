@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">dsh-auto-mode</title>
+  <desc id="desc">A DeepSeek Harness permission plugin that lets routine work flow, classifies contextual risk, asks on ambiguity, and denies critical destructive actions.</desc>
+
+  <rect width="1200" height="360" rx="28" fill="#0B0E0C"/>
+  <path d="M720 44V316" stroke="#263029" stroke-width="1.5"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="58" y="65" fill="#8C9890" font-size="17" font-weight="650" letter-spacing="2.4">DEEPSEEK HARNESS · PERMISSION CONTROL</text>
+    <text x="58" y="143" fill="#F3F7F4" font-size="62" font-weight="760" letter-spacing="-2.2">dsh-auto-mode</text>
+    <text x="58" y="201" fill="#C2CBC5" font-size="27" font-weight="520">Routine work flows. Risky actions stop.</text>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">
+      <rect x="58" y="253" width="180" height="44" rx="22" fill="#142219" stroke="#346141"/>
+      <circle cx="82" cy="275" r="6" fill="#78E08D"/>
+      <text x="99" y="281" fill="#BDF4C8">FAIL-CLOSED</text>
+      <text x="264" y="281" fill="#718078">STATIC GUARDS + SEMANTIC CLASSIFICATION</text>
+    </g>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <text x="770" y="64" fill="#8C9890" font-size="16" letter-spacing="1.8">ONE TOOL CALL · ONE DECISION</text>
+      <rect x="770" y="88" width="364" height="52" rx="12" fill="#161B18" stroke="#3A463E" stroke-width="1.5"/>
+      <text x="794" y="121" fill="#F3F7F4" font-size="17" font-weight="700">TOOL CALL</text>
+      <text x="1008" y="121" fill="#8C9890" font-size="16">inspect effect</text>
+
+      <path d="M794 140V170M794 170H830M794 170H950M794 170H1066" fill="none" stroke="#47534B" stroke-width="1.5"/>
+      <circle cx="794" cy="170" r="4" fill="#8C9890"/>
+
+      <rect x="770" y="190" width="112" height="86" rx="12" fill="#102317" stroke="#3A7549"/>
+      <text x="790" y="221" fill="#7BE28F" font-size="17" font-weight="750">ALLOW</text>
+      <text x="790" y="249" fill="#A7B4AB" font-size="15">routine</text>
+
+      <rect x="896" y="190" width="142" height="86" rx="12" fill="#282114" stroke="#8D6B2E"/>
+      <text x="916" y="221" fill="#F3C66F" font-size="17" font-weight="750">CLASSIFY</text>
+      <text x="916" y="249" fill="#BEB39C" font-size="15">context</text>
+
+      <rect x="1052" y="190" width="82" height="86" rx="12" fill="#2B1717" stroke="#8D4545"/>
+      <text x="1070" y="221" fill="#FF8585" font-size="17" font-weight="750">DENY</text>
+      <text x="1070" y="249" fill="#BFA3A3" font-size="15">critical</text>
+
+      <path d="M967 276V304H1010" fill="none" stroke="#8D6B2E" stroke-width="1.5"/>
+      <rect x="1010" y="289" width="124" height="42" rx="21" fill="#211E17" stroke="#8D6B2E"/>
+      <text x="1033" y="316" fill="#F3C66F" font-size="16" font-weight="700">ASK ONCE</text>
+    </g>
+  </g>
+</svg>

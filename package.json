@@ -36,9 +36,10 @@
   },
   "files": [
     "lib",
+    "assets/readme/hero.svg",
     "cordis.patch.yml",
     "README.md",
-    "README_EN.md",
+    "README_ZH.md",
     "DESIGN.md"
   ],
   "scripts": {

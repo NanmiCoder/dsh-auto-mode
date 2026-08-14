@@ -56,9 +56,8 @@ export declare function hardDenyShellReason(source: string, shell: ShellKind, ro
  * Classify one Bash or PowerShell call after hard-deny evaluation.
  *
  * A compound line is assessed segment by segment. Syntax alone never blocks
- * semantic classification: only a segment this policy cannot read statically —
- * a nested interpreter, a dynamic destructive target, or an opaque construct —
- * falls back to one-shot human approval.
+ * semantic classification. Only destructive targets hidden behind dynamic or
+ * opaque execution stay on the one-shot human approval path.
  */
 export declare function assessShell(source: string, shell: ShellKind, roots: PolicyRoots, artifacts: ArtifactRegistry, owner: object | undefined): Assessment;
 //# sourceMappingURL=shell.d.ts.map

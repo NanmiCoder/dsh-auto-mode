@@ -218,6 +218,19 @@ describe('auto mode approval traffic', () => {
     expect(active.classifierCalls).toEqual([])
   })
 
+  it('keeps dependency probes and read-only find exec off the approval path', async () => {
+    const active = harness as Harness
+    const commands = [
+      'python3 -c "import fastapi" 2>&1; python3 -c "import pydantic; print(\'pydantic\', pydantic.VERSION)" 2>&1; pip3 --version 2>&1 | head -1',
+      `find ${bashQuote(active.scratch)} -type f -exec ls -la {} \\; 2>/dev/null | head -40`,
+    ]
+    for (const command of commands) {
+      expect(await active.run(`safe-dev-${command}`, command, ['继续检查开发环境。']), command).toEqual({ kind: 'allow' })
+    }
+    expect(active.commands).toEqual(commands)
+    expect(active.classifierCalls).toEqual([])
+  })
+
   it('still requires one-shot approval for dynamic and nested execution', async () => {
     const active = harness as Harness
     const cases = [

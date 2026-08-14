@@ -16,13 +16,28 @@ describe('shell policy', () => {
     expect(assessShell('od -c output.txt', 'bash', roots, artifacts, undefined).decision).toBe('allow')
   })
 
-  it('asks on dynamic, nested, or unrecognized syntax', () => {
+  it('classifies visible dynamic or nested checks but keeps opaque execution manual', () => {
     const artifacts = new ArtifactRegistry()
     expect(parseSimpleCommand('echo $(whoami)', 'bash')).toBeUndefined()
-    expect(assessShell('echo $(whoami)', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: false })
-    expect(assessShell('bash -c "git status"', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: false })
+    expect(assessShell('echo $(whoami)', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('bash -c "git status"', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
     expect(assessShell('pwsh -EncodedCommand ZABpAHIA', 'pwsh', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: false })
     expect(assessShell('python script.py', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+  })
+
+  it('fast-paths routine inline dependency and version probes', () => {
+    const artifacts = new ArtifactRegistry()
+    const command = 'python3 -c "import fastapi" 2>&1; python3 -c "import uvicorn" 2>&1; '
+      + 'python3 -c "import sqlalchemy" 2>&1; '
+      + 'python3 -c "import pydantic; print(\'pydantic\', pydantic.VERSION)" 2>&1; pip3 --version 2>&1 | head -1'
+    expect(assessShell(command, 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
+  })
+
+  it('allows read-only find exec placeholders in workspaces and temporary roots', () => {
+    const artifacts = new ArtifactRegistry()
+    const command = 'find /tmp/Agent111TeamsTodo111233dd2BB -type f -exec ls -la {} \\; 2>/dev/null | head -40'
+    expect(decomposeCommandLine(command, 'bash')).toMatchObject({ kind: 'segments' })
+    expect(assessShell(command, 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
   })
 
   it('hard-denies filesystem, home, and DSH_HOME destruction on Bash and PowerShell', () => {
@@ -127,7 +142,7 @@ describe('compound command policy', () => {
     expect(hardDenyShellReason('timeout 30 rm -rf / && echo done', 'bash', roots)).toMatch(/filesystem root/)
   })
 
-  it('fails closed on dynamic targets, nested interpreters, and opaque syntax', () => {
+  it('keeps destructive dynamic, nested, and opaque execution outside classifier authority', () => {
     const artifacts = new ArtifactRegistry()
     const commands = [
       'rm -rf "$BUILD_DIR" && echo done',
@@ -143,6 +158,15 @@ describe('compound command policy', () => {
       expect(assessShell(command, 'bash', roots, artifacts, undefined), command)
         .toMatchObject({ decision: 'ask', classifierEligible: false })
     }
+  })
+
+  it('routes find deletion to authorization while preserving protected-root fuses', () => {
+    const artifacts = new ArtifactRegistry()
+    expect(assessShell('find /tmp/cache -type f -exec rm {} \\;', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('find /tmp/cache -type f -delete', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(hardDenyShellReason('find / -type f -delete', 'bash', roots)).toMatch(/filesystem root/)
   })
 
   it('never fast-paths a line that moves the working directory', () => {
