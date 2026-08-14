@@ -21,10 +21,15 @@ import type { ClassifierDecision, ClassifierInput } from '../src/types.js'
 
 const AUTHORIZATION = /(?:授权|authoriz|approve|go ahead)/i
 
+function bashQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
 /** Deterministic stand-in for the independent model classifier. */
 function classifierDecision(input: ClassifierInput): ClassifierDecision {
   const command = (input.arguments as { command?: string } | undefined)?.command ?? ''
-  const deletion = /rm -rf (\S+)/.exec(command)?.[1]
+  const match = /rm -rf (?:'([^']*)'|(\S+))/.exec(command)
+  const deletion = match?.[1] ?? match?.[2]
   if (deletion === undefined) return { decision: 'allow', reason: 'routine development command' }
   const authorized = input.trustedUserMessages.some(message => AUTHORIZATION.test(message) && message.includes(deletion))
   return authorized
@@ -159,7 +164,7 @@ afterEach(async () => {
 describe('auto mode approval traffic', () => {
   it('runs an explicitly authorized compound deletion without asking again', async () => {
     const active = harness as Harness
-    const command = `rm -rf ${active.canary} && echo removed && ls -la ${active.scratch} 2>&1 || true`
+    const command = `rm -rf ${bashQuote(active.canary)} && echo removed && ls -la ${bashQuote(active.scratch)} 2>&1 || true`
     const decision = await active.run('authorized', command, [
       `请删除 ${active.canary}，我明确授权这次删除。`,
     ])
@@ -175,7 +180,7 @@ describe('auto mode approval traffic', () => {
 
   it('denies the same deletion in the background when no user message authorizes it', async () => {
     const active = harness as Harness
-    const command = `rm -rf ${active.canary} && echo removed && ls -la ${active.scratch} 2>&1 || true`
+    const command = `rm -rf ${bashQuote(active.canary)} && echo removed && ls -la ${bashQuote(active.scratch)} 2>&1 || true`
     const decision = await active.run('unauthorized', command, ['请帮我整理一下项目目录结构。'])
 
     expect(decision).toMatchObject({ kind: 'deny' })
@@ -191,8 +196,8 @@ describe('auto mode approval traffic', () => {
     const cases: Array<[string, RegExp]> = [
       [`rm -rf / && echo done`, /filesystem root/],
       [`rm -rf ~ && echo done`, /user home root/],
-      [`rm -rf ${active.dshHome}/state && echo done`, /DSH_HOME/],
-      [`echo broken > ${active.dshHome}/settings.yaml`, /DSH_HOME/],
+      [`rm -rf ${bashQuote(`${active.dshHome}/state`)} && echo done`, /DSH_HOME/],
+      [`echo broken > ${bashQuote(`${active.dshHome}/settings.yaml`)}`, /DSH_HOME/],
     ]
     for (const [command, reason] of cases) {
       const decision = await active.run(`hard-${command}`, command, authorization)
@@ -217,8 +222,8 @@ describe('auto mode approval traffic', () => {
     const active = harness as Harness
     const cases = [
       `rm -rf $TARGET_DIR && echo done`,
-      `bash -c "rm -rf ${active.canary}"`,
-      `find ${active.scratch} -name "*.txt" | xargs rm -rf`,
+      `bash -c "rm -rf ${bashQuote(active.canary)}"`,
+      `find ${bashQuote(active.scratch)} -name "*.txt" | xargs rm -rf`,
     ]
     for (const command of cases) {
       const decision = await active.run(`manual-${command}`, command, [`我明确授权删除 ${active.canary}。`])
@@ -235,7 +240,7 @@ describe('auto mode classifier failure', () => {
   it('falls back to approval when the classifier cannot answer', async () => {
     const failing = await createHarness({ failClassifier: true })
     try {
-      const command = `rm -rf ${failing.canary} && echo removed`
+      const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
       const decision = await failing.run('unavailable', command, [`我明确授权删除 ${failing.canary}。`])
       expect(decision).toMatchObject({ kind: 'ask' })
       expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable]')

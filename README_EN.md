@@ -113,7 +113,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-auto-mode
 
 ## Classifier configuration
 
-No additional endpoint or API key is required by default. The plugin reads the current Session provider/model from the official `request/header` and sends an independent request through Harness `ctx.llm`; credentials remain owned by the provider the user already configured. The classifier generates at most 256 tokens and carries no main-conversation replay identity.
+No additional endpoint or API key is required by default. The plugin reads the current Session provider/model from the official `request/header` and sends an independent request through Harness `ctx.llm`; credentials remain owned by the provider the user already configured. The classifier generates at most 1024 tokens by default and carries no main-conversation replay identity. `classifierMaxOutputTokens` can tune this within 64–4096; raising it only gives the classifier enough reasoning budget to finish its short JSON and does not relax any safety rule.
 
 To pin a dedicated classification model, configure provider and model together:
 
@@ -123,6 +123,7 @@ To pin a dedicated classification model, configure provider and model together:
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
     classifierTimeoutMs: 8000
+    classifierMaxOutputTokens: 1024
 ```
 
 Advanced deployments may instead use an independent OpenAI Chat Completions-compatible service:

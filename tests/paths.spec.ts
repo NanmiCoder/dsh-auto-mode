@@ -12,8 +12,10 @@ import {
 describe('path policy', () => {
   it('normalizes POSIX traversal and checks containment', () => {
     expect(normalizePath('../file', '/work/project/sub', '/home/test')).toBe('/work/project/file')
+    expect(normalizePath('/work/project/file', 'C:\\host\\cwd', 'C:\\Users\\Dev')).toBe('/work/project/file')
     expect(isWithin('/work/project', '/work/project/src/index.ts')).toBe(true)
     expect(isWithin('/work/project', '/work/project-evil/file')).toBe(false)
+    expect(isWithin('/work/project', 'C:\\work\\project\\src\\index.ts')).toBe(false)
   })
 
   it('treats macOS /tmp, /var, and /etc aliases as their /private targets', () => {
@@ -26,6 +28,7 @@ describe('path policy', () => {
   it('normalizes Windows drive letters case-insensitively', () => {
     expect(normalizePath('C:\\Work\\Repo\\..\\Repo\\File.ts', 'C:\\Work\\Repo', 'C:\\Users\\Dev'))
       .toBe('c:\\work\\repo\\file.ts')
+    expect(normalizePath('src\\x.ts', 'C:\\Work\\Repo', 'C:\\Users\\Dev')).toBe('c:\\work\\repo\\src\\x.ts')
     expect(isWithin('C:\\Work\\Repo', 'c:\\work\\repo\\src\\x.ts')).toBe(true)
     expect(isFilesystemRoot('C:\\')).toBe(true)
   })

@@ -113,7 +113,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-auto-mode
 
 ## 分类器配置
 
-默认不需要配置额外 Endpoint 或 API Key。插件从当前 Session 的官方 `request/header` 读取 Provider 与模型，通过 Harness 的 `ctx.llm` 发起一次独立请求；凭据继续由用户已经配置好的官方 Provider 管理。分类请求最多生成 256 tokens，且不带主会话 replay identity。
+默认不需要配置额外 Endpoint 或 API Key。插件从当前 Session 的官方 `request/header` 读取 Provider 与模型，通过 Harness 的 `ctx.llm` 发起一次独立请求；凭据继续由用户已经配置好的官方 Provider 管理。分类请求默认最多生成 1024 tokens，且不带主会话 replay identity。可通过 `classifierMaxOutputTokens` 在 64–4096 范围内调整；提高该值只影响分类器完成简短 JSON 前可用的推理预算，不会放宽任何安全规则。
 
 需要固定专用分类模型时，Provider 与模型必须成对配置：
 
@@ -123,6 +123,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-auto-mode
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
     classifierTimeoutMs: 8000
+    classifierMaxOutputTokens: 1024
 ```
 
 高级部署也可以改用兼容 OpenAI Chat Completions 响应格式的独立服务：

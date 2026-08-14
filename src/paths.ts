@@ -19,8 +19,18 @@ export interface RootOptions {
 
 type PathStyle = 'posix' | 'win32'
 
-function styleOf(...values: string[]): PathStyle {
-  return values.some(value => /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value)) ? 'win32' : 'posix'
+function explicitStyleOf(value: string): PathStyle | undefined {
+  const canonical = canonicalizeWindowsNamespace(value)
+  if (/^[A-Za-z]:/.test(canonical) || canonical.startsWith('\\')) return 'win32'
+  if (canonical.startsWith('/')) return 'posix'
+  return undefined
+}
+
+/** Prefer the path's own explicit syntax; use cwd only for relative paths. */
+function styleOf(value: string, cwd?: string): PathStyle {
+  return explicitStyleOf(value)
+    ?? (cwd === undefined ? undefined : explicitStyleOf(cwd))
+    ?? (process.platform === 'win32' ? 'win32' : 'posix')
 }
 
 function pathApi(style: PathStyle): typeof posix | typeof win32 {
@@ -99,10 +109,11 @@ export function resolveRoots(activeWorkspace: string | undefined, options: RootO
 
 /** Whether target equals root or is contained below it. */
 export function isWithin(root: string, target: string): boolean {
-  const style = styleOf(root, target)
-  const api = pathApi(style)
   const normalizedRoot = normalizePath(root, root)
   const normalizedTarget = normalizePath(target, root)
+  const style = styleOf(normalizedRoot)
+  if (styleOf(normalizedTarget) !== style) return false
+  const api = pathApi(style)
   const relative = api.relative(normalizedRoot, normalizedTarget)
   return relative === '' || (!relative.startsWith(`..${api.sep}`) && relative !== '..' && !api.isAbsolute(relative))
 }

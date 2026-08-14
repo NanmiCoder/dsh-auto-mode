@@ -91,7 +91,7 @@ export function createDshClassifier(runtime: LlmStreamRuntime, config: DshClassi
         messages: [classifierMessage(input)],
         system: CLASSIFIER_SYSTEM_PROMPT,
         temperature: 0,
-        maxTokens: config.maxOutputTokens ?? 256,
+        maxTokens: config.maxOutputTokens ?? 1_024,
         signal: combined,
       }
       const response = await collectResponse(runtime, options)

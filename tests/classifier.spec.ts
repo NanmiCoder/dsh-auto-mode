@@ -73,7 +73,7 @@ describe('native DSH classifier', () => {
     await expect(classifier.classify(input, new AbortController().signal))
       .resolves.toEqual({ decision: 'allow', reason: 'safe version probe' })
     expect(request).toMatchObject({
-      provider: 'deepseek-official', model: 'deepseek-v4-flash', temperature: 0, maxTokens: 256,
+      provider: 'deepseek-official', model: 'deepseek-v4-flash', temperature: 0, maxTokens: 1_024,
     })
     expect(request?.sessionId).toBeUndefined()
     expect(request?.messages[0]?.content[0]).toMatchObject({ type: 'text' })
