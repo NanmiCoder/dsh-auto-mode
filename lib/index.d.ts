@@ -24,6 +24,8 @@ export interface Config {
     readonly classifierApiKeyEnv?: string;
     readonly classifierTimeoutMs?: number;
     readonly classifierMaxOutputTokens?: number;
+    readonly classifierCacheTtlMs?: number;
+    readonly classifierCacheMaxEntries?: number;
 }
 export declare const Config: z<Config>;
 /** Whether the pending tool call belongs to a session currently using the Auto permission preset. */

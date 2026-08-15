@@ -4,11 +4,12 @@ import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from './artifacts.js'
+import { ClassifierDecisionCache, classifierCacheKey } from './classifier-cache.js'
 import { createHttpClassifier, sanitizeClassifierArguments, sanitizeClassifierText } from './classifier.js'
 import { createDshClassifier } from './dsh-classifier.js'
 import { resolveRoots, type RootOptions } from './paths.js'
 import { assessTool, hardDenyReason } from './policy.js'
-import type { SafetyClassifier } from './types.js'
+import type { ClassifierDecision, SafetyClassifier } from './types.js'
 
 export { ArtifactRegistry } from './artifacts.js'
 export { createHttpClassifier, sanitizeClassifierArguments, type HttpClassifierConfig } from './classifier.js'
@@ -35,6 +36,8 @@ export interface Config {
   readonly classifierApiKeyEnv?: string
   readonly classifierTimeoutMs?: number
   readonly classifierMaxOutputTokens?: number
+  readonly classifierCacheTtlMs?: number
+  readonly classifierCacheMaxEntries?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -48,6 +51,8 @@ export const Config: z<Config> = z.object({
   classifierApiKeyEnv: z.string().default('DEEPSEEK_API_KEY'),
   classifierTimeoutMs: z.number().default(8_000),
   classifierMaxOutputTokens: z.number().default(1_024),
+  classifierCacheTtlMs: z.number().default(60_000),
+  classifierCacheMaxEntries: z.number().default(128),
 })
 
 /** Whether the pending tool call belongs to a session currently using the Auto permission preset. */
@@ -168,6 +173,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   const artifacts = new ArtifactRegistry()
   const classifier = classifierFrom(ctx, config)
   const presetName = config.presetName ?? AUTO_PERMISSION_PRESET
+  const classifierCache = new ClassifierDecisionCache({
+    ttlMs: config.classifierCacheTtlMs ?? 60_000,
+    maxEntries: config.classifierCacheMaxEntries ?? 128,
+  })
   const rootOptions: RootOptions = {
     ...(config.workspaceRoot === undefined ? {} : { workspaceRoot: config.workspaceRoot }),
     ...(config.dshHome === undefined ? {} : { dshHome: config.dshHome }),
@@ -194,16 +203,36 @@ export function apply(ctx: Context, config: Config = {}): void {
     try {
       const authority = authorityFor(exec)
       const route = modelRoute(exec.agent) ?? modelRoute(authority)
-      const decision = await classifier.classify({
+      const payload = {
         toolName: exec.name,
         arguments: sanitizeClassifierArguments(exec.arguments),
         workspaceRoot: roots.workspace,
         policyReason: assessment.reason,
         trustedUserMessages: trustedUserMessages(authority),
         ...(route === undefined ? {} : { route }),
-      }, exec.signal)
-      if (decision.decision === 'allow') return next()
-      if (decision.decision === 'deny') return { kind: 'deny', reason: `[auto-mode classifier deny] ${decision.reason}` }
+      }
+      const cached = classifierCache.get(classifierCacheKey(payload))
+      if (cached !== undefined) {
+        if (cached.decision === 'allow') return next()
+        return { kind: 'deny', reason: `[auto-mode classifier deny] ${cached.reason}` }
+      }
+      // Transient timeout or network jitter is worth one retry before the
+      // fail-closed approval popup. A call the tool itself aborted is not.
+      let decision: ClassifierDecision
+      try {
+        decision = await classifier.classify(payload, exec.signal)
+      } catch (error) {
+        if (exec.signal.aborted) throw error
+        decision = await classifier.classify(payload, exec.signal)
+      }
+      if (decision.decision === 'allow') {
+        classifierCache.set(classifierCacheKey(payload), decision)
+        return next()
+      }
+      if (decision.decision === 'deny') {
+        classifierCache.set(classifierCacheKey(payload), decision)
+        return { kind: 'deny', reason: `[auto-mode classifier deny] ${decision.reason}` }
+      }
       return { kind: 'ask', reason: `[auto-mode classifier asks] ${decision.reason}` }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)

@@ -44,11 +44,15 @@ interface Harness {
   readonly scratch: string
   readonly classifierCalls: readonly ClassifierInput[]
   readonly commands: readonly string[]
-  run(id: string, command: string, userMessages: readonly string[]): Promise<PreToolDecision>
+  run(id: string, command: string, userMessages: readonly string[], signal?: AbortSignal): Promise<PreToolDecision>
   dispose(): Promise<void>
 }
 
-async function createHarness(options: { failClassifier?: boolean } = {}): Promise<Harness> {
+async function createHarness(options: {
+  failClassifier?: boolean | number
+  /** When set, the fake classifier aborts this controller during its FIRST call and fails. */
+  abortOnFirstClassifier?: AbortController
+} = {}): Promise<Harness> {
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-auto-mode-workspace-'))
   const scratch = await mkdtemp(join(tmpdir(), 'dsh-auto-mode-scratch-'))
   const dshHome = join(await mkdtemp(join(tmpdir(), 'dsh-auto-mode-home-')), '.dsh')
@@ -56,6 +60,10 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
   const canary = join(scratch, 'dsh-auto-protected-canary')
   await mkdir(canary, { recursive: true })
   await writeFile(join(canary, 'keep.txt'), 'canary\n')
+  // `true` fails every call; a number fails only the first N calls.
+  let classifierFailuresRemaining = options.failClassifier === true
+    ? Number.POSITIVE_INFINITY
+    : (typeof options.failClassifier === 'number' ? options.failClassifier : 0)
 
   const classifierCalls: ClassifierInput[] = []
   const commands: string[] = []
@@ -66,7 +74,13 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
       const block = generate.messages[0]?.content[0]
       const input = JSON.parse(block?.type === 'text' ? block.text : '{}') as ClassifierInput
       classifierCalls.push(input)
-      if (options.failClassifier === true) throw new Error('classifier route is unavailable')
+      if (options.abortOnFirstClassifier !== undefined && classifierCalls.length === 1) {
+        options.abortOnFirstClassifier.abort()
+      }
+      if (classifierFailuresRemaining > 0) {
+        classifierFailuresRemaining -= 1
+        throw new Error('classifier route is unavailable')
+      }
       const text = JSON.stringify(classifierDecision(input))
       return (async function* () {
         yield { type: 'text-delta', index: 0, text } as const
@@ -130,14 +144,14 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     scratch,
     classifierCalls,
     commands,
-    async run(id, command, userMessages) {
+    async run(id, command, userMessages, signal = new AbortController().signal) {
       decision = undefined
       await context.tools.execute({
         callId: CallId(id),
         name: 'bash',
         arguments: { command },
         agent: agentFor(userMessages),
-        signal: new AbortController().signal,
+        signal,
       })
       return decision as PreToolDecision
     },
@@ -259,6 +273,90 @@ describe('auto mode classifier failure', () => {
       expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable]')
       expect(failing.commands).toEqual([])
       await expect(stat(join(failing.canary, 'keep.txt'))).resolves.toBeDefined()
+    } finally {
+      await failing.dispose()
+    }
+  })
+})
+
+describe('auto mode classifier caching', () => {
+  const commandFor = (harness: Harness) => `rm -rf ${bashQuote(harness.canary)} && echo removed`
+
+  it('calls the classifier once for identical repeated calls within the TTL', async () => {
+    const active = harness as Harness
+    const command = commandFor(active)
+    const user = [`请删除 ${active.canary}，我明确授权这次删除。`]
+    const first = await active.run('cached-allow-1', command, user)
+    expect(first).toEqual({ kind: 'allow' })
+    const second = await active.run('cached-allow-2', command, user)
+    expect(second).toEqual({ kind: 'allow' })
+    expect(active.classifierCalls).toHaveLength(1)
+    expect(active.commands).toEqual([command, command])
+  })
+
+  it('caches deny verdicts too', async () => {
+    const active = harness as Harness
+    const command = commandFor(active)
+    const user = ['帮我整理一下项目目录结构。']
+    const first = await active.run('cached-deny-1', command, user)
+    expect(first).toMatchObject({ kind: 'deny' })
+    const second = await active.run('cached-deny-2', command, user)
+    expect(second).toMatchObject({ kind: 'deny' })
+    expect(active.classifierCalls).toHaveLength(1)
+    expect(active.commands).toEqual([])
+  })
+
+  it('never reuses a cached verdict when trusted user messages differ', async () => {
+    const active = harness as Harness
+    const command = commandFor(active)
+    const authorized = await active.run('cache-auth', command, [`请删除 ${active.canary}，我明确授权。`])
+    expect(authorized).toEqual({ kind: 'allow' })
+    const unauthorized = await active.run('cache-noauth', command, ['帮我整理一下项目目录结构。'])
+    expect(unauthorized).toMatchObject({ kind: 'deny' })
+    expect(active.classifierCalls).toHaveLength(2)
+  })
+})
+
+describe('auto mode classifier retry', () => {
+  it('retries once and succeeds on a transient failure', async () => {
+    const failing = await createHarness({ failClassifier: 1 })
+    try {
+      const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
+      const decision = await failing.run('retry-ok', command, [`请删除 ${failing.canary}，我明确授权。`])
+      expect(decision).toEqual({ kind: 'allow' })
+      expect(failing.classifierCalls).toHaveLength(2)
+      expect(failing.commands).toHaveLength(1)
+    } finally {
+      await failing.dispose()
+    }
+  })
+
+  it('fails closed to approval when the retry also fails', async () => {
+    const failing = await createHarness({ failClassifier: 2 })
+    try {
+      const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
+      const decision = await failing.run('retry-fail', command, [`请删除 ${failing.canary}，我明确授权。`])
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable]')
+      expect(failing.classifierCalls).toHaveLength(2)
+      expect(failing.commands).toEqual([])
+    } finally {
+      await failing.dispose()
+    }
+  })
+
+  it('does not retry when the tool call is aborted during classification', async () => {
+    const abortController = new AbortController()
+    const failing = await createHarness({ failClassifier: true, abortOnFirstClassifier: abortController })
+    try {
+      const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
+      const decision = await failing.run('retry-aborted', command, [`请删除 ${failing.canary}。`], abortController.signal)
+      // The classifier call aborts mid-flight and fails; an aborted tool call
+      // must not burn a retry — it fails closed to approval instead.
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable]')
+      expect(failing.classifierCalls).toHaveLength(1)
+      expect(failing.commands).toEqual([])
     } finally {
       await failing.dispose()
     }

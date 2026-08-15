@@ -692,6 +692,57 @@ export function hardDenyShellReason(source: string, shell: ShellKind, roots: Pol
   return undefined
 }
 
+/**
+ * PowerShell assignment recognition.
+ *
+ * `$x = 5`, `$x = 'abc'`, and `$script = @'...'@` treat the first word as an
+ * assignment TARGET, not a command — the tokenizer marks `$x` dynamic, which
+ * would otherwise route every routine assignment to a manual-approval popup.
+ *
+ * Safety contract:
+ *  - A pure-literal RHS executes nothing, so it may be allowed. "Pure" reuses
+ *    the tokenizer's own dynamic/glob flags: single-quoted strings, here-
+ *    strings, and non-interpolated double-quoted strings are literal;
+ *    anything the tokenizer flagged dynamic (interpolation, `$(...)`, ...) is
+ *    NOT, and `$(...)` already fails the parse as opaque.
+ *  - `$null`, `$true`, `$false` and plain variable references ($x, $env:FOO)
+ *    are also non-executing RHS values and may be allowed.
+ *  - ANY other RHS is assessed recursively through the full command machinery
+ *    (deletion specs, git checks, classifier routing), with the segment's
+ *    redirection targets preserved. The recursion strictly shortens the word
+ *    list, so it always terminates.
+ *  - NO dataflow analysis is performed: `$x = 5; Remove-Item $x` still asks,
+ *    because `$x` may have been reassigned by another path.
+ *  - Bash is untouched: `x=5` (no spaces) is a single word and keeps its
+ *    current classifier path.
+ */
+const PWSH_VARIABLE = /^\$(?:env|global|script|local|using|private)?:?[A-Za-z_][A-Za-z0-9_]*$/
+
+function pwshAssignment(words: readonly CommandWord[]): { rhs: readonly CommandWord[] } | undefined {
+  const first = words[0]
+  const second = words[1]
+  if (first === undefined || second === undefined) return undefined
+  if (!first.dynamic || !PWSH_VARIABLE.test(first.text)) return undefined
+  if (second.text !== '=' || second.dynamic || second.glob || second.quoted) return undefined
+  return { rhs: words.slice(2) }
+}
+
+function isLiteralAssignmentRhs(rhs: readonly CommandWord[]): boolean {
+  if (rhs.length !== 1) return false
+  const word = rhs[0] as CommandWord
+  if (word.glob) return false
+  // Dynamic words are literal only for PowerShell value literals ($null/$true/
+  // $false) and UNQUOTED bare variable references — both execute nothing. A
+  // quoted dynamic word is an interpolation context and must stay out of the
+  // allow path (`"$y"` could equally have been `"$(cmd)"`, which the parse
+  // already routes to opaque, but the classification stays conservative).
+  if (word.dynamic) {
+    if (word.quoted) return false
+    return /^\$(?:null|true|false)$/.test(word.text) || PWSH_VARIABLE.test(word.text)
+  }
+  return true
+}
+
 /** Classify one segment of an already hard-deny-cleared command line. */
 function assessSegment(
   segment: ShellSegment,
@@ -702,6 +753,28 @@ function assessSegment(
 ): Assessment {
   if (segment.words.length === 0) return semanticReview('redirection without a command requires semantic review')
   const first = segment.words[0] as CommandWord
+  if (shell === 'pwsh') {
+    const assignment = pwshAssignment(segment.words)
+    if (assignment !== undefined) {
+      const rhs = assignment.rhs
+      if (rhs.length === 0) {
+        return writeTargetsAreRoutine(segment, shell, roots)
+          ? allowed('PowerShell variable assignment without a value')
+          : semanticReview('PowerShell assignment writes outside routine project content')
+      }
+      if (isLiteralAssignmentRhs(rhs)) {
+        return writeTargetsAreRoutine(segment, shell, roots)
+          ? allowed('PowerShell literal variable assignment')
+          : semanticReview('PowerShell assignment writes outside routine project content')
+      }
+      // Assess the right-hand side as its own command, keeping the segment's
+      // redirection targets so `$x = cmd > file` is judged with them.
+      return assessSegment(
+        { words: rhs, writeTargets: segment.writeTargets, readTargets: segment.readTargets },
+        shell, roots, artifacts, owner,
+      )
+    }
+  }
   if (first.dynamic) return manualReview('the command name is produced by a dynamic expansion')
   if (first.glob) return manualReview('the command name is produced by a glob')
   if (first.quoted) return manualReview('the command name is quoted or escaped rather than written literally')

@@ -175,3 +175,61 @@ describe('compound command policy', () => {
       .toMatchObject({ decision: 'ask', classifierEligible: true })
   })
 })
+
+describe('PowerShell assignment recognition', () => {
+  const artifacts = new ArtifactRegistry()
+
+  it('allows pure-literal assignments, PowerShell literals, and variable copies', () => {
+    const commands = [
+      '$x = 5',
+      '$x = 5.5',
+      '$x = -1',
+      "$x = 'abc'",
+      '$x = "abc"',
+      '$x = $null',
+      '$x = $true',
+      '$x = $false',
+      '$x = $y',
+      '$x = $env:PATH',
+      "$env:FOO = 'bar'",
+      '$global:x = 1',
+      ['$script = @\'', 'first line', 'second line', '\'@'].join('\n'),
+    ]
+    for (const command of commands) {
+      expect(assessShell(command, 'pwsh', roots, artifacts, undefined), command)
+        .toMatchObject({ decision: 'allow' })
+    }
+  })
+
+  it('assesses a command right-hand side through the normal machinery', () => {
+    expect(assessShell('$x = Get-ChildItem', 'pwsh', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
+    expect(assessShell('$x = Get-ChildItem > out.txt', 'pwsh', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
+    expect(assessShell('$x = git commit -m "wip"', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('$x = Remove-Item -Recurse /tmp/canary', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('$x = 5 > /outside/evil.txt', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+  })
+
+  it('keeps dynamic and interpolated right-hand sides out of the allow path', () => {
+    expect(assessShell('$x = "$y"', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: false })
+    expect(assessShell('$x = "a $(Get-Date)"', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell(['$script = @"', 'value $name', '"@'].join('\n'), 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: false })
+  })
+
+  it('never performs dataflow: a later deletion of the assigned variable still asks', () => {
+    expect(assessShell('$x = 5; Remove-Item $x', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: false })
+  })
+
+  it('leaves bash assignment syntax and dynamic first words untouched', () => {
+    expect(assessShell('x=5', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('$x = 5', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: false })
+  })
+})
