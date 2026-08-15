@@ -26,19 +26,23 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 > [!NOTE]
 > 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
 
-任选一种插件来源。
-
 ### npm
 
 ```sh
 dsh plugin --profile web add @nanmicoder/dsh-auto-mode
 ```
 
-### GitHub `main`
+### 从源码构建
 
 ```sh
-dsh plugin --profile web add 'git+https://github.com/NanmiCoder/dsh-auto-mode.git#main'
+git clone https://github.com/NanmiCoder/dsh-auto-mode.git
+cd dsh-auto-mode
+pnpm install
+pnpm build
+dsh plugin --profile web add .
 ```
+
+修改源码后请重新执行 `pnpm build`。本地安装会继续链接到当前源码目录。
 
 检查组合配置并启动：
 

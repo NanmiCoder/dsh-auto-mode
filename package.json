@@ -1,6 +1,6 @@
 {
   "name": "@nanmicoder/dsh-auto-mode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fail-closed automatic permission policy for DeepSeek Harness",
   "author": "程序员阿江(Relakkes) <relakkes@gmail.com>",
   "keywords": [
@@ -48,7 +48,6 @@
     "build": "pnpm run clean && tsc && tsc -p tsconfig.client.json && tsdown",
     "test": "vitest run",
     "verify": "pnpm run typecheck && pnpm run build && pnpm run test && node scripts/verify-package.mjs",
-    "prepare": "pnpm run build",
     "prepublishOnly": "pnpm verify"
   },
   "dsh": {

@@ -26,19 +26,23 @@ Coding agents need broad access to build, test, and inspect a project without st
 > [!NOTE]
 > Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
 
-Choose either plugin source.
-
 ### npm
 
 ```sh
 dsh plugin --profile web add @nanmicoder/dsh-auto-mode
 ```
 
-### GitHub `main`
+### Build from source
 
 ```sh
-dsh plugin --profile web add 'git+https://github.com/NanmiCoder/dsh-auto-mode.git#main'
+git clone https://github.com/NanmiCoder/dsh-auto-mode.git
+cd dsh-auto-mode
+pnpm install
+pnpm build
+dsh plugin --profile web add .
 ```
+
+Run `pnpm build` again after changing the source. The local plugin install remains linked to this checkout.
 
 Validate the composed profile and start DSH:
 

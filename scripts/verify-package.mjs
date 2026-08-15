@@ -14,8 +14,8 @@ if (manifest.publishConfig?.access !== 'public' || manifest.publishConfig?.regis
 if (!patch.includes("name: '@nanmicoder/dsh-auto-mode'")) {
   throw new Error('cordis.patch.yml must resolve the scoped npm package name')
 }
-if (manifest.scripts?.prepublishOnly !== 'pnpm verify' || manifest.scripts?.prepare !== 'pnpm run build') {
-  throw new Error('npm and Git distribution lifecycle scripts are missing or incorrect')
+if (manifest.scripts?.prepublishOnly !== 'pnpm verify' || manifest.scripts?.prepare !== undefined) {
+  throw new Error('npm release lifecycle scripts are missing or Git prepare is still enabled')
 }
 for (const peer of Object.keys(manifest.peerDependencies ?? {})) {
   if (manifest.peerDependenciesMeta?.[peer]?.optional !== true) {
