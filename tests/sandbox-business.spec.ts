@@ -235,6 +235,23 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
     expect(harness.classifierCalls).toEqual([])
   })
 
+  it('removes a file just created by the real editor without invoking the classifier', async () => {
+    const harness = await createBusinessHarness('Create the project config and remove it again if the generated setup does not need it.')
+    const generated = join(harness.workspace, 'vitest.config.ts')
+    const created = await harness.runEditor('create-generated-config', {
+      command: 'create',
+      path: generated,
+      file_text: 'export default {}\n',
+    })
+    expect(created.isError).toBe(false)
+
+    const removed = await harness.run('remove-generated-config', `rm -f ${shellQuote(generated)}`)
+
+    expect(removed.isError).toBe(false)
+    expect(existsSync(generated)).toBe(false)
+    expect(harness.classifierCalls).toEqual([])
+  })
+
   it('builds and tests a multi-package project with real Node, pipelines, and generated artifacts', async () => {
     const harness = await createBusinessHarness('Build and test every package, then generate the aggregate report.')
     await mkdir(join(harness.workspace, 'packages', 'orders'), { recursive: true })
@@ -281,11 +298,10 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
 
     expect(result.isError).toBe(false)
     expect(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: harness.workspace, encoding: 'utf8' }).stdout.trim()).toBe('1')
-    expect(harness.classifierCalls).toHaveLength(1)
-    expect(harness.classifierCalls[0]?.policyReason).toMatch(/Git state-changing/)
+    expect(harness.classifierCalls).toEqual([])
   })
 
-  it('installs a real local package and runs its lifecycle code inside the workspace sandbox', async () => {
+  it('runs a real pnpm install with a workspace-local store and package lifecycle code without classification', async () => {
     const harness = await createBusinessHarness(({ outside }) => `Install the local dependency from ${join(outside, 'fixture-dependency')} into this project.`)
     const dependency = join(harness.outside, 'fixture-dependency')
     await mkdir(dependency)
@@ -304,15 +320,14 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
     await writeFile(join(harness.workspace, 'package.json'), JSON.stringify({ name: 'business-fixture', version: '1.0.0', private: true }))
     const result = await harness.run(
       'local-package-install',
-      `npm install --no-audit --no-fund --cache ${shellQuote(join(harness.workspace, '.npm-cache'))} ${shellQuote(tarball)}`,
+      `pnpm add --allow-build=dsh-auto-fixture-dependency --store-dir ${shellQuote(join(harness.workspace, '.pnpm-store'))} ${shellQuote(tarball)}`,
     )
 
     expect(result.isError).toBe(false)
     expect(result.value).toMatchObject({ exitCode: 0 })
     expect(await readFile(join(harness.workspace, 'node_modules', 'dsh-auto-fixture-dependency', 'postinstall-ran.txt'), 'utf8'))
       .toBe('lifecycle-ok')
-    expect(harness.classifierCalls).toHaveLength(1)
-    expect(harness.classifierCalls[0]?.policyReason).toMatch(/package installation|downloaded-code/)
+    expect(harness.classifierCalls).toEqual([])
   }, 30_000)
 
   it('sends a real report to a local HTTP service only when the direct task requests transmission', async () => {

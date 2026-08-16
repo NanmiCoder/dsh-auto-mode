@@ -104,5 +104,7 @@ describe('tool policy', () => {
       .toMatchObject({ decision: 'allow', classifierEligible: false })
     expect(assessTool(execution('str_replace_editor', { command: 'create', path: '/outside/a.ts' }), roots, artifacts))
       .toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessTool(execution('str_replace_editor', { command: 'create', path: '/work/repo/generated.ts' }), roots, artifacts))
+      .toMatchObject({ plannedCreates: ['/work/repo/generated.ts'] })
   })
 })

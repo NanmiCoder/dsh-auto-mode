@@ -180,6 +180,7 @@ function trustedUserMessages(authority: ToolExecution['agent']): string[] {
 export function apply(ctx: Context, config: Config = {}): void {
   const artifacts = new ArtifactRegistry()
   const grants = new AutoApprovalGrants()
+  const classifierFailures = new WeakMap<object, number>()
   const classifier = classifierFrom(ctx, config)
   const presetName = config.presetName ?? AUTO_PERMISSION_PRESET
   const rootOptions: RootOptions = {
@@ -230,8 +231,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (escalation === undefined && !assessment.classifierEligible) {
       return { kind: 'ask', reason: `[auto-mode approval required] ${assessment.reason}` }
     }
+    const authority = authorityFor(exec)
+    const failureOwner = authority?.session
     try {
-      const authority = authorityFor(exec)
       const route = modelRoute(exec.agent) ?? modelRoute(authority)
       const decision = await classifier.classify({
         toolName: exec.name,
@@ -252,6 +254,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         }),
         ...(route === undefined ? {} : { route }),
       }, exec.signal)
+      if (failureOwner !== undefined) classifierFailures.delete(failureOwner)
       if (decision.decision === 'allow') {
         if (escalation !== undefined) grants.plan(exec, escalation)
         return next()
@@ -264,6 +267,14 @@ export function apply(ctx: Context, config: Config = {}): void {
       return { kind: 'ask', reason: `[auto-mode classifier asks] ${decision.reason}` }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
+      if (!exec.signal.aborted && failureOwner !== undefined) {
+        const failures = (classifierFailures.get(failureOwner) ?? 0) + 1
+        if (failures >= 3) {
+          classifierFailures.delete(failureOwner)
+          return { kind: 'ask', reason: `[auto-mode classifier unavailable after ${failures} attempts; manual approval required] ${message}` }
+        }
+        classifierFailures.set(failureOwner, failures)
+      }
       return { kind: 'deny', reason: `[auto-mode classifier unavailable; action denied] ${message}` }
     }
   })

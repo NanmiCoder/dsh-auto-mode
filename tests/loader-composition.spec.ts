@@ -183,8 +183,8 @@ describe('real Cordis Loader composition', () => {
     await expect(run('root', 'rm -rf /')).resolves.toMatchObject({ isError: true })
     await expect(run('ambiguous', 'python script.py')).resolves.toMatchObject({ isError: false })
     await expect(run('classifier-deny', 'git push origin main')).resolves.toMatchObject({ isError: true })
-    await expect(run('classifier-ask', 'git commit -m ask.py')).resolves.toMatchObject({ isError: true })
-    await expect(run('classifier-invalid', 'git commit -m invalid.py')).resolves.toMatchObject({ isError: true })
+    await expect(run('classifier-ask', 'npx ask.py')).resolves.toMatchObject({ isError: true })
+    await expect(run('classifier-invalid', 'npx invalid.py')).resolves.toMatchObject({ isError: true })
     await expect(run('full-access-root', 'rm -rf /', 'danger-full-access')).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
       callId: CallId('child-safe'), name: 'bash', arguments: { command: 'pnpm test' }, agent: delegatedAgent, signal: new AbortController().signal,
@@ -193,7 +193,7 @@ describe('real Cordis Loader composition', () => {
       callId: CallId('child-root'), name: 'bash', arguments: { command: 'rm -rf /' }, agent: delegatedAgent, signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: true })
     const childClassified = await context.tools.execute({
-      callId: CallId('child-classified'), name: 'bash', arguments: { command: 'git commit -m child' }, agent: delegatedAgent, signal: new AbortController().signal,
+      callId: CallId('child-classified'), name: 'bash', arguments: { command: 'npx child' }, agent: delegatedAgent, signal: new AbortController().signal,
     })
     expect(childClassified.isError, JSON.stringify(childClassified)).toBe(false)
     const childEscalation = await context.tools.execute({

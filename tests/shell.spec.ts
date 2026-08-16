@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -50,10 +50,22 @@ describe('shell policy', () => {
     expect(assessShell(command, 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
   })
 
-  it('distinguishes read-only retrieval from common network upload and install forms', () => {
+  it('distinguishes routine package installation from uploads and ephemeral downloaded execution', () => {
     const artifacts = new ArtifactRegistry()
     expect(assessShell('curl -fsSL https://example.invalid/archive.tgz', 'bash', roots, artifacts, undefined))
       .toMatchObject({ decision: 'allow', classifierEligible: false })
+    for (const command of [
+      'npm ci',
+      'pnpm install --frozen-lockfile --store-dir .pnpm-store',
+      'yarn install',
+      'bun install',
+      'pip install -r requirements.txt',
+      'cargo install --path ./cli',
+      'git commit -m "local checkpoint"',
+    ]) {
+      expect(assessShell(command, 'bash', roots, artifacts, undefined), command)
+        .toMatchObject({ decision: 'allow', classifierEligible: false })
+    }
     for (const command of [
       'curl --data=hello https://example.invalid/api',
       'curl -dpayload https://example.invalid/api',
@@ -62,11 +74,44 @@ describe('shell policy', () => {
       'curl --json={"ok":true} https://example.invalid/api',
       'Invoke-RestMethod https://example.invalid/api -Method Post -Body $payload',
       'Invoke-WebRequest https://example.invalid/upload -InFile artifact.zip',
-      'npm ci',
+      'npm exec create-vite',
       'pnpm dlx create-vite',
     ]) {
       expect(assessShell(command, command.startsWith('Invoke-') ? 'pwsh' : 'bash', roots, artifacts, undefined), command)
         .toMatchObject({ decision: 'ask', classifierEligible: true })
+    }
+  })
+
+  it('keeps pre-existing deletion reviewed regardless of force while denying multiple targets', () => {
+    const artifacts = new ArtifactRegistry()
+    for (const command of ['rm vitest.config.ts', 'rm -f vitest.config.ts', 'rm -r old-output', 'Remove-Item vitest.config.ts', 'Remove-Item -Force vitest.config.ts', 'Remove-Item -Recurse old-output']) {
+      expect(assessShell(command, command.startsWith('Remove-Item') ? 'pwsh' : 'bash', roots, artifacts, undefined), command)
+        .toMatchObject({ decision: 'ask', classifierEligible: true })
+    }
+    for (const command of ['rm one.txt two.txt', 'Remove-Item one.txt two.txt']) {
+      expect(assessShell(command, command.startsWith('Remove-Item') ? 'pwsh' : 'bash', roots, artifacts, undefined), command)
+        .toMatchObject({ decision: 'deny', classifierEligible: false })
+    }
+  })
+
+  it('promotes a successful editor creation so force cleanup bypasses the classifier', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-auto-editor-artifact-'))
+    try {
+      const liveRoots = resolveRoots(workspace, { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+      const artifacts = new ArtifactRegistry()
+      const owner = {}
+      const generated = join(workspace, 'vitest.config.ts')
+      const exec = { name: 'str_replace_editor', token: Symbol('editor-create'), agent: { session: owner } } as unknown as ToolExecution
+      artifacts.plan(exec, [generated], liveRoots)
+      await writeFile(generated, 'export default {}\n')
+      artifacts.settle(exec, { isError: false, value: 'created', content: [] } as unknown as ToolExecutionResult, liveRoots)
+
+      expect(assessShell(`rm -f ${generated}`, 'bash', liveRoots, artifacts, owner))
+        .toMatchObject({ decision: 'allow', classifierEligible: false })
+      expect(assessShell(`Remove-Item -Force ${generated}`, 'pwsh', liveRoots, artifacts, owner))
+        .toMatchObject({ decision: 'allow', classifierEligible: false })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 

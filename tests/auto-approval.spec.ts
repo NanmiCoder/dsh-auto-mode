@@ -103,25 +103,33 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     },
   }))
 
-  const agentFor = (userMessages: readonly string[]) => ({
-    options: { provider: 'mock-provider', model: 'mock-model' },
-    session: {
-      header: { id: 'session-auto', cwd: workspace },
-      requestHeader: () => ({ config: { provider: 'mock-provider', model: 'mock-model' } }),
-      events: [
-        { type: 'permission/preset', data: { preset: 'auto' } },
-        ...userMessages.map((text, index) => ({
-          type: 'user/message',
-          data: {
-            id: `message-${index}`,
-            role: 'user',
-            content: [{ type: 'text', text }],
-            source: { kind: 'user' },
-          },
-        })),
-      ],
-    },
-  }) as unknown as NonNullable<ToolExecutionInput['agent']>
+  const agents = new Map<string, NonNullable<ToolExecutionInput['agent']>>()
+  const agentFor = (userMessages: readonly string[]) => {
+    const key = JSON.stringify(userMessages)
+    const existing = agents.get(key)
+    if (existing !== undefined) return existing
+    const agent = {
+      options: { provider: 'mock-provider', model: 'mock-model' },
+      session: {
+        header: { id: 'session-auto', cwd: workspace },
+        requestHeader: () => ({ config: { provider: 'mock-provider', model: 'mock-model' } }),
+        events: [
+          { type: 'permission/preset', data: { preset: 'auto' } },
+          ...userMessages.map((text, index) => ({
+            type: 'user/message',
+            data: {
+              id: `message-${index}`,
+              role: 'user',
+              content: [{ type: 'text', text }],
+              source: { kind: 'user' },
+            },
+          })),
+        ],
+      },
+    } as unknown as NonNullable<ToolExecutionInput['agent']>
+    agents.set(key, agent)
+    return agent
+  }
 
   return {
     canary,
@@ -250,13 +258,19 @@ describe('auto mode approval traffic', () => {
 })
 
 describe('auto mode classifier failure', () => {
-  it('denies risky work without opening an approval when the classifier cannot answer', async () => {
+  it('denies transient failures twice, then falls back to one manual approval instead of looping', async () => {
     const failing = await createHarness({ failClassifier: true })
     try {
       const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
-      const decision = await failing.run('unavailable', command, [`我明确授权删除 ${failing.canary}。`])
-      expect(decision).toMatchObject({ kind: 'deny' })
-      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable; action denied]')
+      const userMessages = [`我明确授权删除 ${failing.canary}。`]
+      for (const id of ['unavailable-1', 'unavailable-2']) {
+        const decision = await failing.run(id, command, userMessages)
+        expect(decision).toMatchObject({ kind: 'deny' })
+        expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable; action denied]')
+      }
+      const fallback = await failing.run('unavailable-3', command, userMessages)
+      expect(fallback).toMatchObject({ kind: 'ask' })
+      expect((fallback as { reason: string }).reason).toContain('manual approval required')
       expect(failing.commands).toEqual([])
       await expect(stat(join(failing.canary, 'keep.txt'))).resolves.toBeDefined()
     } finally {

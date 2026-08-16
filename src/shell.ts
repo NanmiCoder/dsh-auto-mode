@@ -373,11 +373,9 @@ function networkMutation(name: string, words: readonly CommandWord[]): boolean {
 
 function packageCodeExecution(name: string, words: readonly CommandWord[]): boolean {
   const action = words[1]?.text.toLowerCase()
-  if (['npx', 'bunx'].includes(name) || (name === 'pnpm' && action === 'dlx')) return true
-  if (['npm', 'pnpm', 'yarn', 'bun'].includes(name)) {
-    return ['install', 'i', 'ci', 'add', 'update', 'upgrade', 'remove', 'uninstall'].includes(action ?? '')
-  }
-  return ['pip', 'pip3', 'cargo'].includes(name) && ['install', 'uninstall'].includes(action ?? '')
+  return ['npx', 'bunx'].includes(name)
+    || (['pnpm', 'yarn'].includes(name) && action === 'dlx')
+    || (name === 'npm' && action === 'exec')
 }
 
 /** Preserve semantic guardrails when shell expansion prevents full splitting. */
@@ -389,11 +387,10 @@ function opaqueSemanticReason(source: string): string | undefined {
     || /\b(?:invoke-webrequest|invoke-restmethod)\b[^\r\n]*(?:-method\s+(?:post|put|patch|delete)|-(?:body|infile|outfile)\b)/i.test(compact)) {
     return 'opaque shell syntax contains network transmission or remote mutation'
   }
-  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add|update|upgrade|remove|uninstall)\b/i.test(compact)
-    || /\b(?:npx|bunx)\b|\bpnpm\s+dlx\b|\b(?:pip3?|cargo)\s+(?:install|uninstall)\b/i.test(compact)) {
-    return 'opaque shell syntax installs packages or executes downloaded code'
+  if (/\b(?:npx|bunx)\b|\b(?:pnpm|yarn)\s+dlx\b|\bnpm\s+exec\b/i.test(compact)) {
+    return 'opaque shell syntax executes an ephemeral downloaded package'
   }
-  if (/\bgit\s+(?:reset|clean|commit|push|rebase)\b/i.test(compact)
+  if (/\bgit\s+(?:reset|clean|push|rebase)\b/i.test(compact)
     || /\bgit\s+(?:checkout|switch)\b[^\r\n]*(?:--force|--discard-changes|(?:^|\s)-f(?:\s|$))/i.test(compact)) {
     return 'opaque shell syntax changes durable Git state'
   }
@@ -878,7 +875,7 @@ function classifyEffectiveCommand(
   const gitAction = tokens[1]?.toLowerCase() ?? ''
   const forcedCheckout = ['checkout', 'switch'].includes(gitAction)
     && tokens.some(token => ['-f', '--force', '--discard-changes'].includes(token.toLowerCase()))
-  if (name === 'git' && (['reset', 'clean', 'commit', 'push', 'rebase'].includes(gitAction) || forcedCheckout)) {
+  if (name === 'git' && (['reset', 'clean', 'push', 'rebase'].includes(gitAction) || forcedCheckout)) {
     return semanticReview(`Git state-changing command requires specific user authorization: ${tokens.slice(0, 3).join(' ')}`)
   }
   if (['curl', 'wget', 'invoke-webrequest', 'invoke-restmethod', 'ssh', 'scp', 'rsync'].includes(name)) {
@@ -887,7 +884,7 @@ function classifyEffectiveCommand(
       : allowed(`read-only network retrieval does not require shell syntax classification: ${name}`)
   }
   if (packageCodeExecution(name, words)) {
-    return semanticReview(`package installation or downloaded-code execution requires specific user authorization: ${tokens.slice(0, 3).join(' ')}`)
+    return semanticReview(`ephemeral downloaded-package execution requires specific user authorization: ${tokens.slice(0, 3).join(' ')}`)
   }
   if (/^(?:dropdb|createdb|psql|mysql|mongosh|redis-cli|kubectl|terraform|ansible|systemctl|launchctl)$/.test(name)) {
     return semanticReview(`database, service, or infrastructure operation requires specific user authorization: ${name}`)

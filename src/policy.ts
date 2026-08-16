@@ -191,13 +191,15 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
         filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
       }
     }
+    const targetExisted = existedBefore(normalized)
     return {
       decision: 'allow',
       reason: isWithin(roots.workspace, normalized)
         ? 'routine project-local file edit'
         : 'external mutation is delegated to the workspace-write filesystem sandbox',
       classifierEligible: false,
-      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+      ...(targetExisted ? {} : { plannedCreates: [normalized] }),
+      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: targetExisted }],
     }
   }
 
@@ -223,13 +225,15 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
         filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
       }
     }
+    const targetExisted = existedBefore(normalized)
     return {
       decision: 'allow',
       reason: isWithin(roots.workspace, normalized)
         ? 'routine project-local file edit'
         : 'external mutation is delegated to the workspace-write filesystem sandbox',
       classifierEligible: false,
-      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+      ...(command === 'create' && !targetExisted ? { plannedCreates: [normalized] } : {}),
+      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: targetExisted }],
     }
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "@nanmicoder/dsh-auto-mode",
   "version": "0.1.3",
-  "description": "Fail-closed automatic permission policy for DeepSeek Harness",
+  "description": "Sandbox-first automatic permission policy for DeepSeek Harness",
   "author": "程序员阿江(Relakkes) <relakkes@gmail.com>",
   "keywords": [
     "deepseek",

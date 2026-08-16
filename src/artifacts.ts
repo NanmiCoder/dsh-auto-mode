@@ -99,7 +99,8 @@ export class ArtifactRegistry {
     const value = result.value
     const shellSucceeded = typeof value === 'object' && value !== null
       && 'exitCode' in value && value.exitCode === 0
-    if (pending !== undefined && pending.owner === owner && shellSucceeded) {
+    const pendingSucceeded = exec.name === 'bash' || exec.name === 'pwsh' ? shellSucceeded : true
+    if (pending !== undefined && pending.owner === owner && pendingSucceeded) {
       for (const path of pending.paths) this.add(owner, path)
     }
     if (exec.name === 'write' && typeof value === 'object' && value !== null

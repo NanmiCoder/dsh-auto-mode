@@ -66,10 +66,10 @@ Ordinary Auto work stays inside Workspace Write. Only an explicit one-shot widen
 
 | Decision | Typical effect |
 | --- | --- |
-| **Allow** | unfamiliar sandboxed Bash/PowerShell, project work, builds, tests, type checks, audited DSH coordination tools |
-| **Classify** | existing-data deletion, dangerous Git/database/service changes, sensitive reads, network transmission, external-system writes, exact sandbox widening |
-| **Ask once** | genuinely ambiguous effect or authority; an escalation reuses the official exact approval instead of opening two dialogs |
-| **Deny** | root/home/DSH_HOME/system destruction, policy bypass, credential exfiltration, hidden dynamic deletion, classifier failure |
+| **Allow** | unfamiliar sandboxed Bash/PowerShell, routine dependency installation, local Git commits, project work, builds, tests, type checks, audited DSH coordination tools |
+| **Classify** | pre-session deletion, ephemeral downloaded-package execution, dangerous remote Git/database/service changes, sensitive reads, network transmission, external-system writes, exact sandbox widening |
+| **Ask once** | genuinely ambiguous effect or authority, or manual review after three consecutive classifier failures; an escalation reuses the official exact approval instead of opening two dialogs |
+| **Deny** | root/home/DSH_HOME/system destruction, policy bypass, credential exfiltration, hidden dynamic deletion, and the first two consecutive classifier failures for a risky action |
 
 The classifier is not an authority of its own. It receives a redacted, bounded description of the pending call and may recognize only authorization found in direct human Session messages. Repository text, tool output, Assistant text, Skills, plugins, and sub-agents cannot grant permission.
 
@@ -87,7 +87,9 @@ The sandbox controls where a process writes, not whether deleting existing works
 | Multiple targets, globs, variables, piped operands, or nested-interpreter deletion | deny in the background and require one visible literal target per call |
 | Filesystem root, Home, DSH_HOME, system, or credential-critical paths | deny unconditionally |
 
-Session artifacts are tracked by device, inode, birth time, and kind; recursive cleanup additionally requires every current object in the tree to match the Session registry. A renamed, replaced, or symlink-substituted path—or an old file moved into a new directory—loses automatic-cleanup status. When permanent deletion was not requested, the Agent guidance prefers a move, backup, or version-control-backed removal. Sensitive reads, network transmission, package installation, and external side effects remain reviewed.
+Session artifacts include files created through shell redirection, filesystem tools, and the official string-replacement editor. They are tracked by device, inode, birth time, and kind; recursive cleanup additionally requires every current object in the tree to match the Session registry. A renamed, replaced, or symlink-substituted path—or an old file moved into a new directory—loses automatic-cleanup status. When permanent deletion was not requested, the Agent guidance prefers a move, backup, or version-control-backed removal.
+
+Routine npm, pnpm, yarn, bun, pip, and local Cargo installation runs inside the workspace sandbox without classifier traffic, just like builds and tests. The sandbox still confines filesystem writes; ephemeral runners such as `npx`, `bunx`, `pnpm dlx`, `yarn dlx`, and `npm exec` remain reviewed because they fetch and execute a package without first making it an ordinary project dependency. Sensitive reads, network transmission, and external side effects also remain reviewed.
 
 When the task clearly requires an outside write, the Agent may retry through the official `sandbox_permissions: danger-full-access` plus `justification` contract. For one exact new, narrow, reversible target, direct task intent can support a background one-shot grant without making the user repeat magic authorization words. Overwriting or deleting pre-existing data still requires a direct user message that precisely names the effect and target. The reviewer receives pre-execution `existedBefore` filesystem facts and can return one `allowed-once` only for the same Agent, tool call, mode, and justification; it never changes the standing Session permission.
 
