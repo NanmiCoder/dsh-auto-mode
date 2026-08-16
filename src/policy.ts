@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { ArtifactRegistry } from './artifacts.js'
 import {
@@ -9,6 +10,15 @@ import {
 } from './paths.js'
 import { assessShell, hardDenyShellReason } from './shell.js'
 import type { Assessment } from './types.js'
+
+function existedBefore(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -33,6 +43,26 @@ function serializedArguments(argumentsValue: unknown): string {
 function containsCredentialMaterial(argumentsValue: unknown): boolean {
   return /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b|Bearer\s+[A-Za-z0-9._~+\/-]{8,}|\.ssh[\\/](?:id_|config)|\.credentials\.yaml)/i
     .test(serializedArguments(argumentsValue))
+}
+
+/** One model-requested, tool-native widening of the standing workspace sandbox. */
+export interface SandboxEscalationRequest {
+  readonly requestedMode: string
+  readonly justification: string
+}
+
+/** Read the official paired sandbox escalation arguments without trusting them as authorization. */
+export function sandboxEscalationRequest(argumentsValue: unknown): SandboxEscalationRequest | undefined {
+  const args = record(argumentsValue)
+  if (typeof args?.sandbox_permissions !== 'string') return undefined
+  return {
+    requestedMode: args.sandbox_permissions,
+    justification: typeof args.justification === 'string' ? args.justification : '',
+  }
+}
+
+function sensitiveReadPath(path: string): boolean {
+  return /(?:^|[\\/])(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.config[\\/]gh|\.docker)(?:[\\/]|$)|(?:^|[\\/])(?:id_rsa|id_ed25519|credentials|credentials\.yaml|config\.json|\.env)(?:$|[.\\/])/i.test(path)
 }
 
 const DESTRUCTIVE_TOOL = /(?:^|[_-])(?:delete|destroy|remove|erase|purge|drop|truncate|wipe|unlink|rmdir|reset|revoke)(?:$|[_-])/i
@@ -146,19 +176,29 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     const path = pathArgument(args)
     if (path === undefined) return { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
     const normalized = normalizePath(path, roots.workspace, roots.home)
-    return isWithin(roots.workspace, normalized)
-      ? { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
-      : { decision: 'ask', reason: `reading outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+    return !isWithin(roots.workspace, normalized) && sensitiveReadPath(normalized)
+      ? { decision: 'ask', reason: `reading sensitive data outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+      : { decision: 'allow', reason: 'read-only inspection without a sensitive credential target', classifierEligible: false }
   }
 
   if (exec.name === 'write' || exec.name === 'edit') {
     const path = pathArgument(args)
     if (path === undefined) return { decision: 'ask', reason: `${exec.name} target path is missing`, classifierEligible: false }
     const normalized = normalizePath(path, roots.workspace, roots.home)
-    if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
-      return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
+    if (isProtectedProjectPath(normalized, roots)) {
+      return {
+        decision: 'ask', reason: `mutation of protected project metadata requires specific user authorization: ${normalized}`, classifierEligible: true,
+        filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+      }
     }
-    return { decision: 'allow', reason: 'routine project-local file edit', classifierEligible: false }
+    return {
+      decision: 'allow',
+      reason: isWithin(roots.workspace, normalized)
+        ? 'routine project-local file edit'
+        : 'external mutation is delegated to the workspace-write filesystem sandbox',
+      classifierEligible: false,
+      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+    }
   }
 
 
@@ -173,14 +213,24 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     }
     const normalized = normalizePath(path, roots.workspace, roots.home)
     if (command === 'view') {
-      return isWithin(roots.workspace, normalized)
-        ? { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
-        : { decision: 'ask', reason: `reading outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+      return !isWithin(roots.workspace, normalized) && sensitiveReadPath(normalized)
+        ? { decision: 'ask', reason: `reading sensitive data outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+        : { decision: 'allow', reason: 'read-only inspection without a sensitive credential target', classifierEligible: false }
     }
-    if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
-      return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
+    if (isProtectedProjectPath(normalized, roots)) {
+      return {
+        decision: 'ask', reason: `mutation of protected project metadata requires specific user authorization: ${normalized}`, classifierEligible: true,
+        filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+      }
     }
-    return { decision: 'allow', reason: 'routine project-local file edit', classifierEligible: false }
+    return {
+      decision: 'allow',
+      reason: isWithin(roots.workspace, normalized)
+        ? 'routine project-local file edit'
+        : 'external mutation is delegated to the workspace-write filesystem sandbox',
+      classifierEligible: false,
+      filesystemEffects: [{ kind: 'create-or-overwrite', path: normalized, existedBefore: existedBefore(normalized) }],
+    }
   }
 
   if (SESSION_STATE_TOOLS.has(exec.name)) {
@@ -200,7 +250,7 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
   // state across calls. A standalone text fragment cannot be parsed with the
   // same guarantees as one Bash/PowerShell invocation, so never fast-path it.
   if (exec.name === 'terminal_open' || exec.name === 'terminal_send') {
-    return { decision: 'ask', reason: 'stateful terminal execution requires explicit approval', classifierEligible: false }
+    return { decision: 'ask', reason: 'stateful terminal execution requires semantic review because prior shell state is hidden', classifierEligible: true }
   }
 
   if (['web_search', 'web_fetch', 'time', 'weather'].includes(exec.name)) {

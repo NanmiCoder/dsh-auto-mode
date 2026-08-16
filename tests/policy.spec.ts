@@ -14,10 +14,11 @@ describe('tool policy', () => {
     expect(assessTool(execution('edit', { file_path: 'src/a.ts' }), roots, artifacts).decision).toBe('allow')
   })
 
-  it('asks for protected and external mutations', () => {
+  it('reviews protected metadata and delegates ordinary outside writes to the sandbox', () => {
     const artifacts = new ArtifactRegistry()
     expect(assessTool(execution('write', { file_path: '.git/config' }), roots, artifacts)).toMatchObject({ decision: 'ask', classifierEligible: true })
-    expect(assessTool(execution('write', { file_path: '/outside/a' }), roots, artifacts)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessTool(execution('write', { file_path: '/outside/a' }), roots, artifacts)).toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessTool(execution('read', { file_path: '/home/dev/.ssh/id_ed25519' }), roots, artifacts)).toMatchObject({ decision: 'ask', classifierEligible: true })
   })
 
   it('hard-denies DSH_HOME mutation and fast-paths ordinary registered plugin tools', () => {
@@ -70,7 +71,7 @@ describe('tool policy', () => {
     }
     for (const name of ['terminal_open', 'terminal_send']) {
       expect(assessTool(execution(name, { text: 'pnpm test' }), roots, artifacts), name)
-        .toMatchObject({ decision: 'ask', classifierEligible: false })
+        .toMatchObject({ decision: 'ask', classifierEligible: true })
     }
   })
 
@@ -100,8 +101,8 @@ describe('tool policy', () => {
     expect(assessTool(execution('str_replace_editor', { command: 'view', path: '/work/repo/src/a.ts' }), roots, artifacts).decision).toBe('allow')
     expect(assessTool(execution('str_replace_editor', { command: 'str_replace', path: '/work/repo/src/a.ts' }), roots, artifacts).decision).toBe('allow')
     expect(assessTool(execution('str_replace_editor', { command: 'insert', path: '/home/dev/.zshrc' }), roots, artifacts))
-      .toMatchObject({ decision: 'ask', classifierEligible: true })
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
     expect(assessTool(execution('str_replace_editor', { command: 'create', path: '/outside/a.ts' }), roots, artifacts))
-      .toMatchObject({ decision: 'ask', classifierEligible: true })
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
   })
 })

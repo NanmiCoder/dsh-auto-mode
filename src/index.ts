@@ -6,13 +6,15 @@ import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from './artifacts.js'
 import { createHttpClassifier, sanitizeClassifierArguments, sanitizeClassifierText } from './classifier.js'
 import { createDshClassifier } from './dsh-classifier.js'
+import { AutoApprovalGrants } from './escalation.js'
 import { resolveRoots, type RootOptions } from './paths.js'
-import { assessTool, hardDenyReason } from './policy.js'
+import { assessTool, hardDenyReason, sandboxEscalationRequest } from './policy.js'
 import type { SafetyClassifier } from './types.js'
 
 export { ArtifactRegistry } from './artifacts.js'
 export { createHttpClassifier, sanitizeClassifierArguments, type HttpClassifierConfig } from './classifier.js'
 export { createDshClassifier, type DshClassifierConfig } from './dsh-classifier.js'
+export { AutoApprovalGrants } from './escalation.js'
 export * from './paths.js'
 export * from './policy.js'
 export * from './shell.js'
@@ -22,6 +24,17 @@ export const name = 'auto-permission-mode'
 export const inject = ['tools', 'llm']
 /** Official permission preset key that activates this policy. */
 export const AUTO_PERMISSION_PRESET = 'auto'
+
+/** Dynamic Agent guidance shown only while Auto (or inherited Auto) is active. */
+export const AUTO_MODE_AGENT_GUIDANCE = [
+  '<auto_mode_policy>',
+  'Work normally inside the workspace-write sandbox. Do not ask the user merely because Bash or PowerShell syntax is unfamiliar.',
+  'If a necessary, narrow operation is denied only because it must write outside the workspace, retry that exact operation once with sandbox_permissions="danger-full-access" and a concrete justification. Split unrelated actions into separate calls; never request standing or broad access.',
+  'Treat deletion as the highest-risk routine operation. You may clean up an exact artifact created during this live session. For pre-existing data, act only when the direct user explicitly requested deletion of the exact literal target; never widen that authority to a variable, glob, parent directory, sibling, or additional target.',
+  'When permanent deletion was not explicitly requested, prefer a reversible move/backup or a version-control-backed deletion. If policy denies a hidden target, resolve it and retry with visible literal paths.',
+  'A subagent cannot widen its sandbox. Report a necessary wider action to the parent agent.',
+  '</auto_mode_policy>',
+].join('\n')
 
 /** Host policy configuration. */
 export interface Config {
@@ -166,6 +179,7 @@ function trustedUserMessages(authority: ToolExecution['agent']): string[] {
 /** Install the automatic permission policy on the official tool pipeline. */
 export function apply(ctx: Context, config: Config = {}): void {
   const artifacts = new ArtifactRegistry()
+  const grants = new AutoApprovalGrants()
   const classifier = classifierFrom(ctx, config)
   const presetName = config.presetName ?? AUTO_PERMISSION_PRESET
   const rootOptions: RootOptions = {
@@ -180,15 +194,40 @@ export function apply(ctx: Context, config: Config = {}): void {
   )
   const isAutoExecution = (exec: Readonly<ToolExecution>): boolean => authorityFor(exec) !== undefined
 
+  ctx.inject(['systemPrompt'], (scope) => {
+    scope.systemPrompt.context({
+      name: 'auto-mode:policy',
+      order: 111,
+      text: ({ agent }) => agent !== undefined && authorityFor({ agent } as Readonly<ToolExecution>) !== undefined
+        ? AUTO_MODE_AGENT_GUIDANCE
+        : '',
+    })
+  })
+
   ctx.tools.guard((exec) => isAutoExecution(exec) ? hardDenyReason(exec, rootsFor(exec)) : undefined)
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
     if (!isAutoExecution(exec)) return next()
     const roots = rootsFor(exec)
+    const hard = hardDenyReason(exec, roots)
+    if (hard !== undefined) return { kind: 'deny', reason: `[auto-mode hard deny] ${hard}` }
     const assessment = assessTool(exec, roots, artifacts)
     if (assessment.plannedCreates !== undefined) artifacts.plan(exec, assessment.plannedCreates, roots)
-    if (assessment.decision === 'deny') return { kind: 'deny', reason: `[auto-mode hard deny] ${assessment.reason}` }
-    if (assessment.decision === 'allow') return next()
-    if (!assessment.classifierEligible) {
+    if (assessment.decision === 'deny') return { kind: 'deny', reason: `[auto-mode deterministic deny] ${assessment.reason}` }
+    const escalation = sandboxEscalationRequest(exec.arguments)
+    if (escalation !== undefined) {
+      if (escalation.requestedMode !== 'danger-full-access') {
+        return { kind: 'deny', reason: `[auto-mode invalid sandbox request] Auto already runs in workspace-write; only an exact one-shot danger-full-access escalation is wider` }
+      }
+      if (escalation.justification.trim() === '') {
+        return { kind: 'deny', reason: '[auto-mode invalid sandbox request] sandbox_permissions requires a non-empty justification' }
+      }
+      if (authorityFor(exec) !== exec.agent) {
+        return { kind: 'deny', reason: '[auto-mode delegated escalation denied] a subagent cannot widen the parent workspace sandbox; report the blocked action to the parent' }
+      }
+    } else if (assessment.decision === 'allow') {
+      return next()
+    }
+    if (escalation === undefined && !assessment.classifierEligible) {
       return { kind: 'ask', reason: `[auto-mode approval required] ${assessment.reason}` }
     }
     try {
@@ -198,19 +237,44 @@ export function apply(ctx: Context, config: Config = {}): void {
         toolName: exec.name,
         arguments: sanitizeClassifierArguments(exec.arguments),
         workspaceRoot: roots.workspace,
-        policyReason: assessment.reason,
+        policyReason: escalation === undefined
+          ? assessment.reason
+          : `exact one-shot sandbox escalation requested; underlying action: ${assessment.reason}`,
         trustedUserMessages: trustedUserMessages(authority),
+        ...(assessment.filesystemEffects === undefined ? {} : { filesystemEffects: assessment.filesystemEffects }),
+        ...(escalation === undefined ? {} : {
+          sandboxRequest: {
+            currentMode: 'workspace-write' as const,
+            requestedMode: escalation.requestedMode,
+            justification: sanitizeClassifierText(escalation.justification),
+            platform: process.platform,
+          },
+        }),
         ...(route === undefined ? {} : { route }),
       }, exec.signal)
-      if (decision.decision === 'allow') return next()
+      if (decision.decision === 'allow') {
+        if (escalation !== undefined) grants.plan(exec, escalation)
+        return next()
+      }
       if (decision.decision === 'deny') return { kind: 'deny', reason: `[auto-mode classifier deny] ${decision.reason}` }
+      // A sandbox escalation already owns one exact approval request inside
+      // the official tool body. Let it ask there instead of producing two UI
+      // prompts (one from tools/pre-execute and another from ctx.approval).
+      if (escalation !== undefined) return next()
       return { kind: 'ask', reason: `[auto-mode classifier asks] ${decision.reason}` }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      return { kind: 'ask', reason: `[auto-mode classifier unavailable] ${message}` }
+      return { kind: 'deny', reason: `[auto-mode classifier unavailable; action denied] ${message}` }
     }
   })
+  ctx.on('approval/request', (request, next) => {
+    const outcome = grants.decide(request)
+    return outcome === undefined ? next() : Promise.resolve(outcome)
+  }, { prepend: true })
   ctx.on('tools/result', (exec, result) => {
+    // A planned grant is scoped to this exact tool call. Always retire it when
+    // the call settles, even if the preset changed while the tool was running.
+    grants.settle(exec)
     if (!isAutoExecution(exec)) return
     artifacts.settle(exec, result, rootsFor(exec))
   })

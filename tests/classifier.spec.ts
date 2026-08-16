@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { createHttpClassifier, parseClassifierDecision, sanitizeClassifierArguments, sanitizeClassifierText } from '../src/classifier.js'
+import { CLASSIFIER_SYSTEM_PROMPT, createHttpClassifier, parseClassifierDecision, sanitizeClassifierArguments, sanitizeClassifierText } from '../src/classifier.js'
 import { createDshClassifier } from '../src/dsh-classifier.js'
 
 const input = {
@@ -9,10 +9,19 @@ const input = {
   workspaceRoot: '/work/repo',
   policyReason: 'unknown',
   trustedUserMessages: ['run the project diagnostics'],
+  filesystemEffects: [{ kind: 'create-or-overwrite' as const, path: '/work/repo/report.json', existedBefore: false }],
   route: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
 }
 
 describe('HTTP classifier', () => {
+  it('helps with narrow reversible widening but keeps deletion explicitly scoped', () => {
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('without magic words such as "authorize"')
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('only creates new data or is readily reversible')
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('existedBefore=true means the call may overwrite or delete pre-existing data')
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('deletion or replacement of pre-existing data')
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain('Never generalize permission from one path to a glob')
+  })
+
   it('accepts only a strict decision object', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: '{"decision":"allow","reason":"routine local check"}' } }],
@@ -78,6 +87,7 @@ describe('native DSH classifier', () => {
     expect(request?.sessionId).toBeUndefined()
     expect(request?.messages[0]?.content[0]).toMatchObject({ type: 'text' })
     expect(JSON.stringify(request?.messages)).toContain('trustedUserMessages')
+    expect(JSON.stringify(request?.messages)).toContain('filesystemEffects')
   })
 
   it('fails loud on unavailable routes, invalid output, and provider failures', async () => {

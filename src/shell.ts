@@ -1,14 +1,14 @@
+import { lstatSync } from 'node:fs'
 import { basename } from 'node:path'
 import type { ArtifactRegistry } from './artifacts.js'
 import {
   hardDestructiveTargetReason,
-  isArtifactArea,
   isProtectedProjectPath,
   isWithin,
   normalizePath,
   type PolicyRoots,
 } from './paths.js'
-import type { Assessment } from './types.js'
+import type { Assessment, FilesystemEffect } from './types.js'
 
 export type ShellKind = 'bash' | 'pwsh'
 
@@ -42,27 +42,40 @@ export type ShellDecomposition =
   | { readonly kind: 'segments'; readonly segments: readonly ShellSegment[] }
   | { readonly kind: 'opaque'; readonly reason: string }
 
-function ambiguous(reason: string): Assessment {
-  return { decision: 'ask', reason, classifierEligible: true }
-}
-
-function manualReview(reason: string): Assessment {
-  return { decision: 'ask', reason, classifierEligible: false }
-}
-
-function semanticReview(reason: string): Assessment {
-  return { decision: 'ask', reason, classifierEligible: true }
+function semanticReview(reason: string, filesystemEffects?: readonly FilesystemEffect[]): Assessment {
+  return {
+    decision: 'ask', reason, classifierEligible: true,
+    ...(filesystemEffects === undefined || filesystemEffects.length === 0 ? {} : { filesystemEffects }),
+  }
 }
 
 function denied(reason: string): Assessment {
   return { decision: 'deny', reason, classifierEligible: false }
 }
 
-function allowed(reason: string, plannedCreates?: readonly string[]): Assessment {
+function allowed(
+  reason: string,
+  plannedCreates?: readonly string[],
+  filesystemEffects?: readonly FilesystemEffect[],
+): Assessment {
   return {
     decision: 'allow', reason, classifierEligible: false,
     ...(plannedCreates === undefined || plannedCreates.length === 0 ? {} : { plannedCreates }),
+    ...(filesystemEffects === undefined || filesystemEffects.length === 0 ? {} : { filesystemEffects }),
   }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function filesystemEffects(kind: FilesystemEffect['kind'], paths: readonly string[]): FilesystemEffect[] {
+  return paths.map(path => ({ kind, path, existedBefore: pathExists(path) }))
 }
 
 function opaque(reason: string): ShellDecomposition {
@@ -105,7 +118,8 @@ function readExpansion(input: string, index: number, shell: ShellKind): string |
  * Operators separate segments so that every command in a compound line is
  * assessed on its own. Constructs whose effect cannot be read statically —
  * command substitution, here-documents, grouping, unbalanced quotes — return
- * `opaque` so callers fail closed instead of guessing shell semantics.
+ * `opaque`. The policy can still run ordinary opaque syntax inside the OS
+ * sandbox while separately recognizing sensitive or destructive effects.
  */
 export function decomposeCommandLine(source: string, shell: ShellKind): ShellDecomposition {
   const input = source
@@ -308,7 +322,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
   return { kind: 'segments', segments }
 }
 
-/** Parse one static shell command. Any executable shell syntax fails closed. */
+/** Parse one fully static shell command for helpers that need exact words. */
 export function parseSimpleCommand(source: string, shell: ShellKind): ParsedCommand | undefined {
   const decomposition = decomposeCommandLine(source, shell)
   if (decomposition.kind === 'opaque' || decomposition.segments.length !== 1) return undefined
@@ -330,6 +344,63 @@ function dynamicHomeTarget(source: string): boolean {
 
 function sensitiveMarker(source: string): boolean {
   return /(?:\.ssh[\\/]|\.gnupg[\\/]|\.aws[\\/]|\.kube[\\/]|\.credentials\.yaml|id_(?:rsa|ed25519)|(?:API|AUTH|ACCESS|SECRET)[_-]?KEY|TOKEN|PASSWORD)/i.test(source)
+}
+
+function sensitiveReadMarker(source: string): boolean {
+  return sensitiveMarker(source)
+    || /(?:^|[\\/])(?:\.env(?:\.[^\\/\s]+)?|credentials(?:\.json|\.yaml)?|netrc|npmrc)(?:$|[\\/\s"'])/i.test(source)
+    || /(?:^|\s)(?:env|set|printenv|get-childitem\s+env:)(?:\s|$)/i.test(source)
+}
+
+function networkMutation(name: string, words: readonly CommandWord[]): boolean {
+  const rawTokens = words.slice(1).map(word => word.text)
+  const tokens = rawTokens.map(token => token.toLowerCase())
+  if (['ssh', 'scp', 'sftp', 'rsync'].includes(name)) return true
+  if (name === 'curl') {
+    return rawTokens.some(token => /^(?:-d(?:.+)?|--data(?:-ascii|-binary|-raw|-urlencode)?(?:=.+)?|-F(?:.+)?|--form(?:-string)?(?:=.+)?|-T(?:.+)?|--upload-file(?:=.+)?|--json(?:=.+)?)$/.test(token))
+      || tokens.some((token, index) => /^(?:-x|--request)$/.test(token)
+        && /^(?:post|put|patch|delete)$/.test(tokens[index + 1] ?? ''))
+      || tokens.some(token => /^(?:-x|--request=)(?:post|put|patch|delete)$/.test(token))
+  }
+  if (name === 'wget') return tokens.some(token => /^(?:--post-data|--post-file|--method=(?:post|put|patch|delete))/.test(token))
+  if (['invoke-webrequest', 'invoke-restmethod'].includes(name)) {
+    return tokens.some((token, index) => /^-method$/i.test(token)
+      && /^(?:post|put|patch|delete)$/i.test(tokens[index + 1] ?? ''))
+      || tokens.some(token => /^-(?:body|infile|outfile)$/i.test(token))
+  }
+  return false
+}
+
+function packageCodeExecution(name: string, words: readonly CommandWord[]): boolean {
+  const action = words[1]?.text.toLowerCase()
+  if (['npx', 'bunx'].includes(name) || (name === 'pnpm' && action === 'dlx')) return true
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(name)) {
+    return ['install', 'i', 'ci', 'add', 'update', 'upgrade', 'remove', 'uninstall'].includes(action ?? '')
+  }
+  return ['pip', 'pip3', 'cargo'].includes(name) && ['install', 'uninstall'].includes(action ?? '')
+}
+
+/** Preserve semantic guardrails when shell expansion prevents full splitting. */
+function opaqueSemanticReason(source: string): string | undefined {
+  const compact = source.replace(/\s+/g, ' ')
+  if (/\b(?:ssh|scp|sftp|rsync)\b/i.test(compact)
+    || /\bcurl\b[^\r\n]*(?:\s-d(?:\s|[^\s])|--data(?:-ascii|-binary|-raw|-urlencode)?(?:=|\s)|\s-F(?:\s|[^\s])|--form(?:-string)?(?:=|\s)|\s-T(?:\s|[^\s])|--upload-file(?:=|\s)|--json(?:=|\s)|-X\s*(?:POST|PUT|PATCH|DELETE)|--request(?:=|\s)(?:POST|PUT|PATCH|DELETE))/i.test(compact)
+    || /\bwget\b[^\r\n]*(?:--post-(?:data|file)(?:=|\s)|--method=(?:post|put|patch|delete))/i.test(compact)
+    || /\b(?:invoke-webrequest|invoke-restmethod)\b[^\r\n]*(?:-method\s+(?:post|put|patch|delete)|-(?:body|infile|outfile)\b)/i.test(compact)) {
+    return 'opaque shell syntax contains network transmission or remote mutation'
+  }
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add|update|upgrade|remove|uninstall)\b/i.test(compact)
+    || /\b(?:npx|bunx)\b|\bpnpm\s+dlx\b|\b(?:pip3?|cargo)\s+(?:install|uninstall)\b/i.test(compact)) {
+    return 'opaque shell syntax installs packages or executes downloaded code'
+  }
+  if (/\bgit\s+(?:reset|clean|commit|push|rebase)\b/i.test(compact)
+    || /\bgit\s+(?:checkout|switch)\b[^\r\n]*(?:--force|--discard-changes|(?:^|\s)-f(?:\s|$))/i.test(compact)) {
+    return 'opaque shell syntax changes durable Git state'
+  }
+  if (/\b(?:dropdb|createdb|psql|mysql|mongosh|redis-cli|kubectl|terraform|ansible|systemctl|launchctl)\b/i.test(compact)) {
+    return 'opaque shell syntax operates on a database, service, or infrastructure target'
+  }
+  return undefined
 }
 
 /** Whether a redirection target discards output instead of writing a file. */
@@ -402,6 +473,8 @@ const WRAPPER_VALUE_FLAGS: Readonly<Record<string, RegExp>> = {
 function unwrapCommand(words: readonly CommandWord[]): UnwrappedCommand {
   let current = words
   let dynamicInput = false
+  const firstCommand = current.findIndex(word => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))
+  if (firstCommand > 0) current = current.slice(firstCommand)
   for (let depth = 0; depth < 4; depth += 1) {
     const name = commandName(current[0]?.text ?? '')
     if (!WRAPPERS.has(name)) break
@@ -436,6 +509,7 @@ function nestedExecution(name: string, words: readonly CommandWord[]): NestedExe
   if (['node', 'deno', 'bun', 'python', 'python3', 'perl', 'ruby', 'php', 'osascript'].includes(name)) {
     const index = words.findIndex((word, wordIndex) => wordIndex > 0 && /^(?:-c|-e|-E|--eval|--exec|--command|--print)$/.test(word.text))
     if (index >= 0) return { ...(words[index + 1] === undefined ? {} : { source: (words[index + 1] as CommandWord).text }) }
+    if (words.length === 1 || words.some((word, wordIndex) => wordIndex > 0 && word.text === '-')) return {}
     return undefined
   }
   if (['sh', 'bash', 'zsh', 'fish', 'ksh', 'dash', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(name)) {
@@ -480,22 +554,6 @@ function explicitPaths(words: readonly CommandWord[], roots: PolicyRoots): strin
     .map(token => normalizePath(token, roots.workspace, roots.home))
 }
 
-function readPathsAreRoutine(words: readonly CommandWord[], roots: PolicyRoots): boolean {
-  return explicitPaths(words, roots).every(path =>
-    (isWithin(roots.workspace, path) && !isProtectedProjectPath(path, roots))
-    || roots.tempRoots.some(root => isWithin(root, path)))
-}
-
-/** Every redirection target must be a discard sink or ordinary project content. */
-function writeTargetsAreRoutine(segment: ShellSegment, shell: ShellKind, roots: PolicyRoots): boolean {
-  return segment.writeTargets.every((target) => {
-    if (isNullSink(target, shell)) return true
-    if (target.dynamic || target.glob) return false
-    const normalized = normalizePath(target.text, roots.workspace, roots.home)
-    return isWithin(roots.workspace, normalized) && !isProtectedProjectPath(normalized, roots)
-  })
-}
-
 function buildOrTest(words: readonly CommandWord[]): boolean {
   const tokens = words.map(word => word.text)
   const name = commandName(tokens[0] as string)
@@ -521,13 +579,7 @@ function versionProbe(words: readonly CommandWord[]): boolean {
   return name === 'go' && tokens.length === 2 && tokens[1]?.toLowerCase() === 'version'
 }
 
-/**
- * Directory changers stay out of both fast-path sets on purpose. `cd` rewrites
- * the working directory for every later segment of the same line, so relative
- * paths could no longer be resolved against the workspace. Leaving it
- * unrecognized keeps any line containing it out of the static allow path and
- * routes the whole line to semantic classification instead.
- */
+/** High-confidence read-only commands; unknown commands still run sandboxed. */
 const BASH_READ_ONLY = [
   'pwd', 'ls', 'rg', 'grep', 'egrep', 'fgrep', 'head', 'tail', 'cat', 'wc', 'od', 'du', 'df', 'stat', 'file', 'which', 'type',
   'echo', 'printf', 'true', 'false', ':', 'test', '[', 'basename', 'dirname', 'realpath', 'readlink', 'date', 'whoami', 'id',
@@ -620,9 +672,20 @@ function creationSpec(
       } else if (!token.startsWith('-') && !/^(?:file|directory)$/i.test(token)) raw.push(token)
     }
   }
+  if (shell === 'pwsh' && ['set-content', 'out-file'].includes(name)) {
+    raw = []
+    for (let index = 1; index < words.length; index += 1) {
+      const token = (words[index] as CommandWord).text
+      if (/^-(?:path|literalpath|filepath)$/i.test(token)) {
+        const value = words[index + 1]
+        if (value !== undefined) raw.push(value.text)
+        index += 1
+      }
+    }
+  }
   if (raw === undefined || raw.length === 0) return undefined
   const paths = raw.map(path => normalizePath(path, roots.workspace, roots.home))
-  return { paths, protected: paths.some(path => !isWithin(roots.workspace, path) || isProtectedProjectPath(path, roots)) }
+  return { paths, protected: paths.some(path => isProtectedProjectPath(path, roots)) }
 }
 
 /** Unconditional hard deny for one segment, independent of classifier behavior. */
@@ -701,29 +764,43 @@ function assessSegment(
   owner: object | undefined,
 ): Assessment {
   if (segment.words.length === 0) return semanticReview('redirection without a command requires semantic review')
-  const first = segment.words[0] as CommandWord
-  if (first.dynamic) return manualReview('the command name is produced by a dynamic expansion')
-  if (first.glob) return manualReview('the command name is produced by a glob')
-  if (first.quoted) return manualReview('the command name is quoted or escaped rather than written literally')
-  if (segment.writeTargets.some(target => target.dynamic && !isNullSink(target, shell))) {
-    return manualReview('the redirection target is produced by a dynamic expansion')
+  const unwrapped = unwrapCommand(segment.words)
+  const first = unwrapped.words[0] as CommandWord
+  if (first.dynamic || first.glob) {
+    return denied('the executable name is produced dynamically; resolve it and retry with a visible literal command')
   }
 
-  const unwrapped = unwrapCommand(segment.words)
   const words = unwrapped.words
   const name = commandName((words[0] as CommandWord).text)
   const nested = nestedExecution(name, words)
   if (nested !== undefined) {
     if (routineInlineProbe(name, nested.source)) return allowed('routine inline package or version probe')
-    if (nested.source === undefined) return manualReview('opaque nested execution requires manual review')
-    if (destructiveNestedSource(nested.source)) return manualReview('nested deletion requires manual review')
-    return semanticReview('visible nested or inline-code execution requires independent classification')
+    if (nested.source === undefined
+      && (words.length === 1 || words.some(word => /^(?:-|--?|\/)?(?:encodedcommand|enc)$/i.test(word.text) || word.text === '-'))) {
+      return semanticReview('opaque interpreter input requires semantic review because its network and read effects are not sandboxed')
+    }
+    if (nested.source !== undefined && destructiveNestedSource(nested.source)) {
+      return denied('nested deletion must be rewritten as a visible command with literal targets before Auto can review it')
+    }
+    return allowed('nested or inline code remains confined by the workspace-write sandbox')
   }
 
   const base = classifyEffectiveCommand(name, words, segment, shell, roots, artifacts, owner, unwrapped.dynamicInput)
-  if (base.decision !== 'allow' || writeTargetsAreRoutine(segment, shell, roots)) return base
-  return semanticReview(`redirection writes outside routine project content: ${
-    segment.writeTargets.map(target => target.text).join(', ')}`)
+  if (base.decision !== 'allow') return base
+  const staticWritePaths = segment.writeTargets
+    .filter(target => !target.dynamic && !isNullSink(target, shell))
+    .map(target => normalizePath(target.text, roots.workspace, roots.home))
+  const writeEffects = filesystemEffects('create-or-overwrite', staticWritePaths)
+  const protectedTargets = staticWritePaths.filter(target => isProtectedProjectPath(target, roots))
+  if (protectedTargets.length > 0) {
+    return semanticReview(`redirection mutates protected project metadata: ${protectedTargets.join(', ')}`, writeEffects)
+  }
+  if (writeEffects.length === 0) return base
+  const plannedCreates = [
+    ...(base.plannedCreates ?? []),
+    ...writeEffects.filter(effect => !effect.existedBefore).map(effect => effect.path),
+  ]
+  return allowed(base.reason, [...new Set(plannedCreates)], [...(base.filesystemEffects ?? []), ...writeEffects])
 }
 
 function classifyEffectiveCommand(
@@ -736,41 +813,45 @@ function classifyEffectiveCommand(
   owner: object | undefined,
   dynamicInput: boolean,
 ): Assessment {
-  const operands = [...words.slice(1), ...segment.readTargets]
-
   const deletion = deletionSpec(name, words, shell)
   if (deletion !== undefined) {
-    if (dynamicInput) return manualReview('deletion operands arrive from piped input and cannot be read statically')
-    if (deletion.targets.length === 0) return manualReview('deletion target could not be determined')
+    if (dynamicInput) return denied('deletion operands arrive from piped input; rewrite the deletion with literal targets')
+    if (deletion.targets.length === 0) return denied('deletion target could not be determined; rewrite the deletion with literal targets')
+    if (deletion.targets.length > 1) {
+      return denied('multiple deletion targets are not authorized together; split them into one visible literal target per call')
+    }
     if (deletion.targets.some(target => target.dynamic)) {
-      return manualReview('deletion target is produced by a dynamic expansion')
+      return denied('deletion target is produced dynamically; resolve it and retry with literal targets')
+    }
+    if (deletion.targets.some(target => target.glob)) {
+      return denied('globbed deletion targets are not authorized in Auto; resolve the glob and retry one visible literal target per call')
     }
     const paths = deletion.targets.map(target => normalizePath(target.text, roots.workspace, roots.home))
-    if (deletion.targets.every(target => !target.glob)
-      && paths.every(path => artifacts.has(owner, path, roots) && isArtifactArea(path, roots))) {
-      return allowed(`delete exact session-created artifact${paths.length === 1 ? '' : 's'}: ${paths.join(', ')}`)
+    const effects = filesystemEffects('delete', paths)
+    if (paths.every(path => deletion.recursive
+      ? artifacts.hasTree(owner, path, roots)
+      : artifacts.has(owner, path, roots))) {
+      return allowed(`delete exact session-created artifact${paths.length === 1 ? '' : 's'}: ${paths.join(', ')}`, undefined, effects)
     }
-    return semanticReview(`deleting pre-session or unobserved data requires specific user authorization: ${paths.join(', ')}`)
+    return semanticReview(`deleting pre-session or unobserved data requires specific user authorization: ${paths.join(', ')}`, effects)
   }
 
-  if (dynamicInput) return ambiguous(`operands arrive from piped input and require independent classification: ${name}`)
+  if (dynamicInput) return allowed(`piped operands remain confined by the workspace-write sandbox: ${name}`)
 
   if (name === 'find' && !findActionsAreReadOnly(words)) {
     return semanticReview(findHasDestructiveAction(words)
       ? 'find deletion requires specific user authorization'
-      : 'find executes or writes through a non-read-only action and requires independent classification')
+      : 'find nested work remains confined by the workspace-write sandbox')
   }
 
   if (readOnlyCommand(name, words, shell)) {
-    return readPathsAreRoutine(operands, roots)
-      ? allowed('static read-only command inside the workspace or temporary area')
-      : semanticReview('read-only command references a protected or external path')
+    return sensitiveReadMarker(words.map(word => word.text).join(' '))
+      ? semanticReview('shell command reads potentially sensitive credential or environment data')
+      : allowed('read-only inspection without a sensitive credential target')
   }
   if (versionProbe(words)) return allowed('static development-tool version probe')
   if (buildOrTest(words)) {
-    return readPathsAreRoutine(operands, roots)
-      ? allowed('recognized project build, test, or verification command')
-      : semanticReview('build or test command references a protected or external path')
+    return allowed('recognized project build, test, or verification command under the workspace sandbox')
   }
 
   const creation = creationSpec(name, words, shell, roots)
@@ -779,36 +860,50 @@ function classifyEffectiveCommand(
       return semanticReview(`creating a dynamically named path requires semantic review: ${creation.paths.join(', ')}`)
     }
     return creation.protected
-      ? semanticReview(`creating outside routine project content requires specific user authorization: ${creation.paths.join(', ')}`)
-      : allowed('create exact project-local artifacts', creation.paths)
+      ? semanticReview(`creating protected project metadata requires specific user authorization: ${creation.paths.join(', ')}`, filesystemEffects('create-or-overwrite', creation.paths))
+      : allowed('create paths under the workspace-write boundary', creation.paths, filesystemEffects('create-or-overwrite', creation.paths))
   }
 
   if (shell === 'bash' && ['cp', 'mv'].includes(name)) {
     const paths = explicitPaths(words.slice(1).filter(word => !word.text.startsWith('-')), roots)
-    return paths.length > 0 && paths.every(path => isWithin(roots.workspace, path) && !isProtectedProjectPath(path, roots))
-      ? allowed('static project-local file operation')
-      : semanticReview('file move/copy target is external, protected, or unclear')
+    if (words.some(word => sensitiveReadMarker(word.text))) {
+      return semanticReview('file move/copy references potentially sensitive credential data')
+    }
+    return paths.some(path => isProtectedProjectPath(path, roots))
+      ? semanticReview('file move/copy mutates protected project metadata')
+      : allowed('file move/copy remains confined by the workspace-write sandbox')
   }
 
   const tokens = words.map(word => word.text)
-  if (name === 'git' && ['reset', 'clean', 'commit', 'push', 'rebase', 'checkout', 'switch', 'branch', 'tag'].includes(tokens[1]?.toLowerCase() ?? '')) {
+  const gitAction = tokens[1]?.toLowerCase() ?? ''
+  const forcedCheckout = ['checkout', 'switch'].includes(gitAction)
+    && tokens.some(token => ['-f', '--force', '--discard-changes'].includes(token.toLowerCase()))
+  if (name === 'git' && (['reset', 'clean', 'commit', 'push', 'rebase'].includes(gitAction) || forcedCheckout)) {
     return semanticReview(`Git state-changing command requires specific user authorization: ${tokens.slice(0, 3).join(' ')}`)
   }
   if (['curl', 'wget', 'invoke-webrequest', 'invoke-restmethod', 'ssh', 'scp', 'rsync'].includes(name)) {
-    return semanticReview(`external network operation requires specific user authorization when it writes or transmits data: ${name}`)
+    return networkMutation(name, words)
+      ? semanticReview(`network transmission or remote mutation requires specific user authorization: ${name}`)
+      : allowed(`read-only network retrieval does not require shell syntax classification: ${name}`)
+  }
+  if (packageCodeExecution(name, words)) {
+    return semanticReview(`package installation or downloaded-code execution requires specific user authorization: ${tokens.slice(0, 3).join(' ')}`)
   }
   if (/^(?:dropdb|createdb|psql|mysql|mongosh|redis-cli|kubectl|terraform|ansible|systemctl|launchctl)$/.test(name)) {
     return semanticReview(`database, service, or infrastructure operation requires specific user authorization: ${name}`)
   }
-  return ambiguous(`unrecognized ${shell} command requires independent classification: ${name}`)
+  return sensitiveReadMarker(words.map(word => word.text).join(' '))
+    ? semanticReview(`command may read sensitive credentials or environment data: ${name}`)
+    : allowed(`unrecognized ${shell} syntax runs inside the workspace-write sandbox: ${name}`)
 }
 
 /**
  * Classify one Bash or PowerShell call after hard-deny evaluation.
  *
  * A compound line is assessed segment by segment. Syntax alone never blocks
- * semantic classification. Only destructive targets hidden behind dynamic or
- * opaque execution stay on the one-shot human approval path.
+ * semantic classification. Destructive targets hidden behind dynamic or
+ * opaque execution are denied; recognized external effects remain eligible
+ * for semantic review even when the full shell grammar is unavailable.
  */
 export function assessShell(
   source: string,
@@ -821,20 +916,27 @@ export function assessShell(
   if (hard !== undefined) return denied(hard)
   const decomposition = decomposeCommandLine(source, shell)
   if (decomposition.kind === 'opaque') {
+    const semanticReason = opaqueSemanticReason(source)
     return destructiveNestedSource(source)
-      ? manualReview(`${shell} destructive command cannot be read statically: ${decomposition.reason}`)
-      : semanticReview(`${shell} command requires independent classification because it cannot be read statically: ${decomposition.reason}`)
+      ? denied(`${shell} destructive command must be rewritten with visible literal targets: ${decomposition.reason}`)
+      : sensitiveReadMarker(source)
+        ? semanticReview(`${shell} command may read sensitive credentials or environment data`)
+        : semanticReason !== undefined
+          ? semanticReview(`${semanticReason}: ${decomposition.reason}`)
+          : allowed(`${shell} syntax remains confined by the workspace-write sandbox even though static decomposition is unavailable`)
   }
 
   const assessments = decomposition.segments.map(segment => assessSegment(segment, shell, roots, artifacts, owner))
-  const blocked = assessments.find(assessment => assessment.decision === 'ask' && !assessment.classifierEligible)
-  if (blocked !== undefined) return blocked
+  const deterministicDeny = assessments.find(assessment => assessment.decision === 'deny')
+  if (deterministicDeny !== undefined) return deterministicDeny
   if (assessments.every(assessment => assessment.decision === 'allow')) {
     const creates = assessments.flatMap(assessment => assessment.plannedCreates ?? [])
+    const effects = assessments.flatMap(assessment => assessment.filesystemEffects ?? [])
     return allowed(assessments.length === 1
       ? (assessments[0] as Assessment).reason
-      : `every command in this ${shell} line is a recognized routine operation`, creates)
+      : `every command in this ${shell} line is a recognized routine operation`, creates, effects)
   }
   const reasons = assessments.filter(assessment => assessment.decision !== 'allow').map(assessment => assessment.reason)
-  return semanticReview([...new Set(reasons)].join('; ').slice(0, 800))
+  const effects = assessments.flatMap(assessment => assessment.filesystemEffects ?? [])
+  return semanticReview([...new Set(reasons)].join('; ').slice(0, 800), effects)
 }

@@ -231,7 +231,7 @@ describe('auto mode approval traffic', () => {
     expect(active.classifierCalls).toEqual([])
   })
 
-  it('still requires one-shot approval for dynamic and nested execution', async () => {
+  it('denies hidden destructive targets so the agent can replan without a popup', async () => {
     const active = harness as Harness
     const cases = [
       `rm -rf $TARGET_DIR && echo done`,
@@ -240,8 +240,8 @@ describe('auto mode approval traffic', () => {
     ]
     for (const command of cases) {
       const decision = await active.run(`manual-${command}`, command, [`我明确授权删除 ${active.canary}。`])
-      expect(decision, command).toMatchObject({ kind: 'ask' })
-      expect((decision as { reason: string }).reason, command).toContain('[auto-mode approval required]')
+      expect(decision, command).toMatchObject({ kind: 'deny' })
+      expect((decision as { reason: string }).reason, command).toContain('[auto-mode deterministic deny]')
     }
     expect(active.classifierCalls).toEqual([])
     expect(active.commands).toEqual([])
@@ -250,13 +250,13 @@ describe('auto mode approval traffic', () => {
 })
 
 describe('auto mode classifier failure', () => {
-  it('falls back to approval when the classifier cannot answer', async () => {
+  it('denies risky work without opening an approval when the classifier cannot answer', async () => {
     const failing = await createHarness({ failClassifier: true })
     try {
       const command = `rm -rf ${bashQuote(failing.canary)} && echo removed`
       const decision = await failing.run('unavailable', command, [`我明确授权删除 ${failing.canary}。`])
-      expect(decision).toMatchObject({ kind: 'ask' })
-      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable]')
+      expect(decision).toMatchObject({ kind: 'deny' })
+      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable; action denied]')
       expect(failing.commands).toEqual([])
       await expect(stat(join(failing.canary, 'keep.txt'))).resolves.toBeDefined()
     } finally {

@@ -159,13 +159,13 @@ describe('real Cordis Loader composition', () => {
       session: {
         header: { id: 'child', cwd: root, origin: 'subagent', parentSession: 'session-auto' },
         // Match the official spawn/continuable persistence shape. The child
-        // does not carry Auto directly: DSH derives danger-full-access from
-        // its delegated sandbox + approval=never knobs, and this plugin must
+        // does not carry Auto directly: DSH keeps the delegated workspace
+        // sandbox but pins approval=never, and this plugin must
         // still resolve Auto from the live parentSession authority.
         events: [
-          { type: 'sandbox/mode', data: { mode: 'danger-full-access', source: 'delegation' } },
+          { type: 'sandbox/mode', data: { mode: 'workspace-write', source: 'delegation' } },
           { type: 'approval/policy', data: { policy: 'never', source: 'delegation' } },
-          { type: 'permission/preset', data: { preset: 'danger-full-access' } },
+          { type: 'permission/preset', data: { preset: 'workspace-write' } },
         ],
       },
     } as unknown as NonNullable<ToolExecutionInput['agent']>
@@ -183,8 +183,8 @@ describe('real Cordis Loader composition', () => {
     await expect(run('root', 'rm -rf /')).resolves.toMatchObject({ isError: true })
     await expect(run('ambiguous', 'python script.py')).resolves.toMatchObject({ isError: false })
     await expect(run('classifier-deny', 'git push origin main')).resolves.toMatchObject({ isError: true })
-    await expect(run('classifier-ask', 'python ask.py')).resolves.toMatchObject({ isError: true })
-    await expect(run('classifier-invalid', 'python invalid.py')).resolves.toMatchObject({ isError: true })
+    await expect(run('classifier-ask', 'git commit -m ask.py')).resolves.toMatchObject({ isError: true })
+    await expect(run('classifier-invalid', 'git commit -m invalid.py')).resolves.toMatchObject({ isError: true })
     await expect(run('full-access-root', 'rm -rf /', 'danger-full-access')).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
       callId: CallId('child-safe'), name: 'bash', arguments: { command: 'pnpm test' }, agent: delegatedAgent, signal: new AbortController().signal,
@@ -193,13 +193,28 @@ describe('real Cordis Loader composition', () => {
       callId: CallId('child-root'), name: 'bash', arguments: { command: 'rm -rf /' }, agent: delegatedAgent, signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: true })
     const childClassified = await context.tools.execute({
-      callId: CallId('child-classified'), name: 'bash', arguments: { command: 'python script.py' }, agent: delegatedAgent, signal: new AbortController().signal,
+      callId: CallId('child-classified'), name: 'bash', arguments: { command: 'git commit -m child' }, agent: delegatedAgent, signal: new AbortController().signal,
     })
     expect(childClassified.isError, JSON.stringify(childClassified)).toBe(false)
+    const childEscalation = await context.tools.execute({
+      callId: CallId('child-escalation'),
+      name: 'bash',
+      arguments: {
+        command: 'printf widened',
+        sandbox_permissions: 'danger-full-access',
+        justification: 'write outside the delegated workspace',
+      },
+      agent: delegatedAgent,
+      signal: new AbortController().signal,
+    })
+    expect(childEscalation.isError).toBe(true)
+    expect(childEscalation.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('[auto-mode delegated escalation denied]') }),
+    ]))
     expect(bodyCalls).toBe(5)
     expect(ordinaryPluginBodyCalls).toBe(1)
     expect(riskyPluginBodyCalls).toBe(0)
-    expect(classifierCalls).toHaveLength(6)
-    expect(classifierCalls[5]?.trustedUserMessages).toEqual(['Build and test this project.'])
+    expect(classifierCalls).toHaveLength(5)
+    expect(classifierCalls[4]?.trustedUserMessages).toEqual(['Build and test this project.'])
   })
 })

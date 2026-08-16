@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { isArtifactArea, normalizePath, type PolicyRoots } from './paths.js'
 
@@ -7,16 +8,76 @@ interface PendingCreation {
   readonly paths: readonly string[]
 }
 
+interface ArtifactIdentity {
+  readonly dev: number
+  readonly ino: number
+  readonly birthtimeMs: number
+  readonly kind: 'file' | 'directory' | 'symlink' | 'other'
+}
+
+function identityOf(path: string): ArtifactIdentity | undefined {
+  try {
+    const stat = lstatSync(path)
+    return {
+      dev: stat.dev,
+      ino: stat.ino,
+      birthtimeMs: stat.birthtimeMs,
+      kind: stat.isFile() ? 'file' : stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'other',
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function sameIdentity(left: ArtifactIdentity, right: ArtifactIdentity): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.birthtimeMs === right.birthtimeMs
+    && left.kind === right.kind
+}
+
 /** In-memory provenance for exact paths created successfully during the live session. */
 export class ArtifactRegistry {
-  private readonly created = new WeakMap<object, Set<string>>()
+  private readonly created = new WeakMap<object, Map<string, ArtifactIdentity>>()
   private readonly pending = new Map<symbol, PendingCreation>()
 
   /** Whether a path was observed as created in this exact live session. */
   has(owner: object | undefined, path: string, roots: PolicyRoots): boolean {
     if (owner === undefined) return false
     const normalized = normalizePath(path, roots.workspace, roots.home)
-    return isArtifactArea(normalized, roots) && this.created.get(owner)?.has(normalized) === true
+    const recorded = this.created.get(owner)?.get(normalized)
+    const current = identityOf(normalized)
+    return isArtifactArea(normalized, roots)
+      && recorded !== undefined
+      && current !== undefined
+      && sameIdentity(recorded, current)
+  }
+
+  /**
+   * Whether every object in a recursively deleted tree is still an observed
+   * Session artifact. This prevents an old file moved into a new directory
+   * from inheriting the directory's automatic-cleanup authority.
+   */
+  hasTree(owner: object | undefined, path: string, roots: PolicyRoots): boolean {
+    if (owner === undefined) return false
+    const normalized = normalizePath(path, roots.workspace, roots.home)
+    const recordedPaths = this.created.get(owner)
+    if (!isArtifactArea(normalized, roots) || recordedPaths === undefined) return false
+    let remaining = 4096
+    const visit = (candidate: string): boolean => {
+      remaining -= 1
+      if (remaining < 0) return false
+      const recorded = recordedPaths.get(candidate)
+      const current = identityOf(candidate)
+      if (recorded === undefined || current === undefined || !sameIdentity(recorded, current)) return false
+      if (current.kind !== 'directory') return true
+      try {
+        return readdirSync(candidate).every(entry => visit(join(candidate, entry)))
+      } catch {
+        return false
+      }
+    }
+    return visit(normalized)
   }
 
   /** Record planned exact creations for settlement-time promotion. */
@@ -50,8 +111,10 @@ export class ArtifactRegistry {
   }
 
   private add(owner: object, path: string): void {
-    const paths = this.created.get(owner) ?? new Set<string>()
-    paths.add(path)
+    const identity = identityOf(path)
+    if (identity === undefined) return
+    const paths = this.created.get(owner) ?? new Map<string, ArtifactIdentity>()
+    paths.set(path, identity)
     this.created.set(owner, paths)
   }
 }

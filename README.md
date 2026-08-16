@@ -16,10 +16,10 @@
 
 Coding agents need broad access to build, test, and inspect a project without stopping every few steps. But DeepSeek Harness currently leaves a sharp choice: restricted modes interrupt normal development, while Full access removes approval entirely.
 
-`dsh-auto-mode` adds the missing middle ground. Routine project work proceeds automatically, contextual risk is classified using the current DSH model and the direct user's instructions, genuine ambiguity asks once, and destructive access to critical paths is denied before execution.
+`dsh-auto-mode` adds the missing middle ground. Routine project work runs directly inside the official `workspace-write` sandbox, only semantic risks outside that boundary are classified using the current DSH model and the direct user's instructions, genuine ambiguity asks once, and destructive access to critical paths is denied before execution.
 
 > [!IMPORTANT]
-> This plugin is a fail-closed policy layer for calls dispatched through Harness `ctx.tools`; it is not an operating-system sandbox. Keep the official sandbox and filesystem observation policies enabled.
+> This plugin does not implement a sandbox. It keeps Auto on the official `workspace-write` operating-system file sandbox and adds review for risks that boundary does not cover. The file sandbox does not restrict reads, network access, or external services; the Windows backend reports `partial` enforcement.
 
 ## Install
 
@@ -59,31 +59,45 @@ Refresh the Web UI, select **Auto** between Workspace Write and Full access, and
 | --- | --- | --- | --- |
 | Read Only | `read-only` | ask | inactive |
 | Workspace Write | `workspace-write` | ask | inactive |
-| **Auto** | `danger-full-access` | ask | **active** |
+| **Auto** | `workspace-write` | ask | **active** |
 | Full access | `danger-full-access` | never | inactive |
 
-Auto keeps the execution range of Full access, but evaluates every tool call independently:
+Ordinary Auto work stays inside Workspace Write. Only an explicit one-shot widening may be approved automatically:
 
 | Decision | Typical effect |
 | --- | --- |
-| **Allow** | project reads/edits, builds, tests, type checks, safe temp work, audited DSH coordination tools |
-| **Classify** | visible inline code, existing-data deletion, Git/database/service mutation, external writes |
-| **Ask once** | ambiguous intent, hidden or dynamic effects, stateful terminal execution, classifier failure |
-| **Deny** | root/home/DSH_HOME/system destruction, privilege or policy bypass, credential exfiltration |
+| **Allow** | unfamiliar sandboxed Bash/PowerShell, project work, builds, tests, type checks, audited DSH coordination tools |
+| **Classify** | existing-data deletion, dangerous Git/database/service changes, sensitive reads, network transmission, external-system writes, exact sandbox widening |
+| **Ask once** | genuinely ambiguous effect or authority; an escalation reuses the official exact approval instead of opening two dialogs |
+| **Deny** | root/home/DSH_HOME/system destruction, policy bypass, credential exfiltration, hidden dynamic deletion, classifier failure |
 
 The classifier is not an authority of its own. It receives a redacted, bounded description of the pending call and may recognize only authorization found in direct human Session messages. Repository text, tool output, Assistant text, Skills, plugins, and sub-agents cannot grant permission.
 
-## Shell and deletion behavior
+## Shell, sandbox, and deletion behavior
 
-Every Bash and PowerShell call is inspected segment by segment, including compound commands, pipelines, and redirections. Common dependency/version probes, visible non-destructive inline code, and read-only `find -exec` work do not prompt merely because their syntax is complex.
+Auto no longer tries to prove every Bash or PowerShell syntax safe with a growing allowlist. Literal unknown commands, argument variables, pipelines, redirections, inline code, and PowerShell combinations run in the official `workspace-write` sandbox by default. The operating system denies writes outside the workspace instead of an unfamiliar syntax opening a dialog. Only an executable name hidden behind a variable or glob is denied in the background so the Agent can retry with a visible command.
 
-Deletion is treated by effect, not by keyword alone. Exact cleanup of artifacts created during the live Session can proceed; deletion of existing data enters semantic classification; dynamic destructive targets and protected paths ask or deny. Unsupported shell syntax fails closed instead of being silently allowed.
+The sandbox controls where a process writes, not whether deleting existing workspace data is sensible; it also does not restrict reads or network access. Deletion therefore has a narrower policy than ordinary writes:
+
+| Deletion kind | Auto behavior |
+| --- | --- |
+| One exact artifact created in this Session with unchanged file identity | clean up automatically |
+| One pre-existing file or directory | classify only after a direct user message precisely requests that target |
+| One pre-existing target outside the workspace | lend one exact wider grant after precise authorization |
+| Multiple targets, globs, variables, piped operands, or nested-interpreter deletion | deny in the background and require one visible literal target per call |
+| Filesystem root, Home, DSH_HOME, system, or credential-critical paths | deny unconditionally |
+
+Session artifacts are tracked by device, inode, birth time, and kind; recursive cleanup additionally requires every current object in the tree to match the Session registry. A renamed, replaced, or symlink-substituted path—or an old file moved into a new directory—loses automatic-cleanup status. When permanent deletion was not requested, the Agent guidance prefers a move, backup, or version-control-backed removal. Sensitive reads, network transmission, package installation, and external side effects remain reviewed.
+
+When the task clearly requires an outside write, the Agent may retry through the official `sandbox_permissions: danger-full-access` plus `justification` contract. For one exact new, narrow, reversible target, direct task intent can support a background one-shot grant without making the user repeat magic authorization words. Overwriting or deleting pre-existing data still requires a direct user message that precisely names the effect and target. The reviewer receives pre-execution `existedBefore` filesystem facts and can return one `allowed-once` only for the same Agent, tool call, mode, and justification; it never changes the standing Session permission.
+
+Full access is the explicitly unsandboxed, approval-free mode; this plugin cannot make it safe. Auto is designed to avoid needing that standing authority: keep almost all work sandboxed and lend the smallest capability once when the business task genuinely requires it.
 
 ## Sub-agents, Workflow, and Goal
 
-Official in-process Subagents, Workflow `agent()` calls, Ralph `spawn` workers, and AgentTeams members inherit Auto through their live `parentSession` chain. Their individual file and shell calls are still checked separately. Goal stays on the current Agent and therefore keeps the same authority.
+Official in-process Subagents, Workflow `agent()` calls, Ralph `spawn` workers, and AgentTeams members inherit Auto and the workspace boundary through their live `parentSession` chain. Their individual file and shell calls are still checked separately. Goal stays on the current Agent and therefore keeps the same authority.
 
-Delegated children use `approval: never`, so an action that still requires a human decision is rejected and reported to the parent rather than opening an approval prompt. Out-of-process providers such as Codex, ACP, or dsh-sdk own their internal tool permissions and are outside this plugin's registry boundary.
+Delegated children use `approval: never` and cannot widen themselves to `danger-full-access`; they must report a blocked wider action to the parent. Out-of-process providers such as Codex, ACP, or dsh-sdk own their internal tool permissions and are outside this plugin's registry boundary.
 
 ## Configuration
 
@@ -102,7 +116,7 @@ See [DESIGN.md](./DESIGN.md) for the complete decision order, threat model, Wind
 
 ## Security boundaries
 
-The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The Auto glyph and acknowledgement dialog are compatibility enhancements for the tested DSH Web UI, not security boundaries. Direct `/permission auto` calls do not show the Web dialog, and upstream menu markup changes may hide both enhancements; the Host policy still applies whenever the Session preset is `auto`.
+The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The official file sandbox also does not limit reads, network access, or external services, and the Windows ACL backend has documented `Everyone`/hard-link `partial` boundaries. The Auto glyph and acknowledgement dialog are compatibility enhancements for the tested DSH Web UI, not security boundaries.
 
 ## Development
 

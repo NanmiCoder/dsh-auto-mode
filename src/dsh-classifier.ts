@@ -22,6 +22,8 @@ function classifierPayload(input: ClassifierInput): string {
     workspaceRoot: input.workspaceRoot,
     policyReason: input.policyReason,
     trustedUserMessages: input.trustedUserMessages,
+    filesystemEffects: input.filesystemEffects,
+    sandboxRequest: input.sandboxRequest,
   })
 }
 

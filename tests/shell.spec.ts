@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from '../src/artifacts.js'
@@ -16,13 +19,27 @@ describe('shell policy', () => {
     expect(assessShell('od -c output.txt', 'bash', roots, artifacts, undefined).decision).toBe('allow')
   })
 
-  it('classifies visible dynamic or nested checks but keeps opaque execution manual', () => {
+  it('allows unfamiliar sandbox-contained syntax while reviewing opaque interpreter input', () => {
     const artifacts = new ArtifactRegistry()
     expect(parseSimpleCommand('echo $(whoami)', 'bash')).toBeUndefined()
-    expect(assessShell('echo $(whoami)', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
-    expect(assessShell('bash -c "git status"', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
-    expect(assessShell('pwsh -EncodedCommand ZABpAHIA', 'pwsh', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: false })
-    expect(assessShell('python script.py', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('echo $(whoami)', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessShell('bash -c "git status"', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessShell('pwsh -EncodedCommand ZABpAHIA', 'pwsh', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('python script.py', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessShell('cat payload.py | python', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('python -', 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('$x = 5; Get-ChildItem . | Where-Object { $_.Length -gt 0 }', 'pwsh', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
+  })
+
+  it('handles quoted literal executables but denies a hidden executable name', () => {
+    const artifacts = new ArtifactRegistry()
+    expect(assessShell('"/usr/bin/git" status', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessShell('"/bin/rm" -rf scratch', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(assessShell('$COMMAND --whatever', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'deny', classifierEligible: false })
   })
 
   it('fast-paths routine inline dependency and version probes', () => {
@@ -31,6 +48,26 @@ describe('shell policy', () => {
       + 'python3 -c "import sqlalchemy" 2>&1; '
       + 'python3 -c "import pydantic; print(\'pydantic\', pydantic.VERSION)" 2>&1; pip3 --version 2>&1 | head -1'
     expect(assessShell(command, 'bash', roots, artifacts, undefined)).toMatchObject({ decision: 'allow' })
+  })
+
+  it('distinguishes read-only retrieval from common network upload and install forms', () => {
+    const artifacts = new ArtifactRegistry()
+    expect(assessShell('curl -fsSL https://example.invalid/archive.tgz', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
+    for (const command of [
+      'curl --data=hello https://example.invalid/api',
+      'curl -dpayload https://example.invalid/api',
+      'curl -XPOST https://example.invalid/api',
+      'curl --request=DELETE https://example.invalid/item/1',
+      'curl --json={"ok":true} https://example.invalid/api',
+      'Invoke-RestMethod https://example.invalid/api -Method Post -Body $payload',
+      'Invoke-WebRequest https://example.invalid/upload -InFile artifact.zip',
+      'npm ci',
+      'pnpm dlx create-vite',
+    ]) {
+      expect(assessShell(command, command.startsWith('Invoke-') ? 'pwsh' : 'bash', roots, artifacts, undefined), command)
+        .toMatchObject({ decision: 'ask', classifierEligible: true })
+    }
   })
 
   it('allows read-only find exec placeholders in workspaces and temporary roots', () => {
@@ -60,19 +97,32 @@ describe('shell policy', () => {
       .toMatchObject({ decision: 'ask', classifierEligible: true })
   })
 
-  it('requires approval for pre-session deletion but allows exact live artifacts', () => {
-    const artifacts = new ArtifactRegistry()
-    const owner = {}
-    expect(assessShell('rm -rf scratch', 'bash', roots, artifacts, owner)).toMatchObject({ decision: 'ask', classifierEligible: true })
-    const exec = { name: 'write', token: Symbol('write'), agent: { session: owner } } as unknown as ToolExecution
-    const result = {
-      isError: false,
-      value: { operation: 'create', path: '/work/repo/scratch' },
-      content: [],
-    } as unknown as ToolExecutionResult
-    artifacts.settle(exec, result, roots)
-    expect(assessShell('rm -rf scratch', 'bash', roots, artifacts, owner).decision).toBe('allow')
-    expect(assessShell('rm -rf scratch && echo done', 'bash', roots, artifacts, owner).decision).toBe('allow')
+  it('allows only the same live artifact identity, not a later replacement at that path', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-auto-artifact-'))
+    try {
+      const liveRoots = resolveRoots(workspace, { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+      const artifacts = new ArtifactRegistry()
+      const owner = {}
+      const scratch = join(workspace, 'scratch')
+      expect(assessShell('rm -rf scratch', 'bash', liveRoots, artifacts, owner)).toMatchObject({ decision: 'ask', classifierEligible: true })
+      await mkdir(scratch)
+      const exec = { name: 'write', token: Symbol('write'), agent: { session: owner } } as unknown as ToolExecution
+      const result = {
+        isError: false,
+        value: { operation: 'create', path: scratch },
+        content: [],
+      } as unknown as ToolExecutionResult
+      artifacts.settle(exec, result, liveRoots)
+      expect(assessShell('rm -rf scratch', 'bash', liveRoots, artifacts, owner).decision).toBe('allow')
+      expect(assessShell('rm -rf scratch && echo done', 'bash', liveRoots, artifacts, owner).decision).toBe('allow')
+
+      await rename(scratch, `${scratch}-original`)
+      await mkdir(scratch)
+      expect(assessShell('rm -rf scratch', 'bash', liveRoots, artifacts, owner))
+        .toMatchObject({ decision: 'ask', classifierEligible: true })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
   })
 
   it('never treats model justification or external text as authorization', () => {
@@ -142,22 +192,27 @@ describe('compound command policy', () => {
     expect(hardDenyShellReason('timeout 30 rm -rf / && echo done', 'bash', roots)).toMatch(/filesystem root/)
   })
 
-  it('keeps destructive dynamic, nested, and opaque execution outside classifier authority', () => {
+  it('denies hidden destruction so the agent must retry with literal visible targets', () => {
     const artifacts = new ArtifactRegistry()
     const commands = [
       'rm -rf "$BUILD_DIR" && echo done',
       'rm -rf ${TARGET}',
+      'TARGET=/tmp/x rm -rf "$TARGET"',
       'rm -rf $(cat targets.txt)',
       'find . -name "*.tmp" | xargs rm -rf',
-      'echo generated > $OUTPUT_FILE',
+      'rm -rf ./one ./two',
+      'rm -rf ./build-*',
       'ls && bash -c "rm -rf /tmp/x"',
-      'cat payload.b64 | base64 -d | sh',
       'git status && node -e "require(\'fs\').rmSync(\'/tmp/x\')"',
     ]
     for (const command of commands) {
       expect(assessShell(command, 'bash', roots, artifacts, undefined), command)
-        .toMatchObject({ decision: 'ask', classifierEligible: false })
+        .toMatchObject({ decision: 'deny', classifierEligible: false })
     }
+    expect(assessShell('echo generated > $OUTPUT_FILE', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
+    expect(assessShell('cat payload.b64 | base64 -d | sh', 'bash', roots, artifacts, undefined))
+      .toMatchObject({ decision: 'ask', classifierEligible: true })
   })
 
   it('routes find deletion to authorization while preserving protected-root fuses', () => {
@@ -169,9 +224,9 @@ describe('compound command policy', () => {
     expect(hardDenyShellReason('find / -type f -delete', 'bash', roots)).toMatch(/filesystem root/)
   })
 
-  it('never fast-paths a line that moves the working directory', () => {
+  it('allows changing the process cwd because the sandbox root does not change', () => {
     const artifacts = new ArtifactRegistry()
     expect(assessShell('cd /etc && ls -la', 'bash', roots, artifacts, undefined))
-      .toMatchObject({ decision: 'ask', classifierEligible: true })
+      .toMatchObject({ decision: 'allow', classifierEligible: false })
   })
 })

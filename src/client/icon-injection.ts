@@ -198,7 +198,7 @@ interface RiskCopy {
 
 const EN_RISK_COPY: RiskCopy = {
   title: 'Enable Auto?',
-  description: 'Auto keeps the Full access filesystem scope and adds an automatic policy layer to assess tool calls. This policy is not an operating-system sandbox: classifier mistakes and operations performed by plugins or other code outside the DSH tool pipeline can escape its checks. Only use Auto when you trust the current task, workspace, and installed plugins.',
+  description: 'Auto keeps DSH’s workspace-write operating-system file sandbox for ordinary work and can approve one exact wider request when a narrow, reversible step is clearly required by your task. Deleting or overwriting pre-existing data still requires exact direct-user authority and never extends to another target. The file sandbox does not restrict reads, network access, or external services; Windows enforcement is partial, and code outside the DSH tool pipeline remains outside this policy.',
   acknowledge: 'I understand the risks and want to continue',
   cancel: 'Cancel',
   confirm: 'Enable Auto',
@@ -207,7 +207,7 @@ const EN_RISK_COPY: RiskCopy = {
 
 const ZH_RISK_COPY: RiskCopy = {
   title: '确认启用 Auto？',
-  description: 'Auto 保留 Full access 的文件访问范围，并通过自动策略层判断工具调用。该策略不是操作系统级沙箱：分类误判，以及插件或其他代码在 DSH 工具链外执行的操作，仍可能避开检查。仅建议在你信任当前任务、工作区和已安装插件时使用。',
+  description: 'Auto 对普通操作保留 DSH 的 workspace-write 操作系统级文件沙箱；当任务明确需要一项范围很小、可恢复的越界操作时，可自动批准一次精确权限。删除或覆盖已有数据仍要求用户直接、精确授权，而且绝不扩展到第二个目标。文件沙箱不限制读取、网络和外部服务，Windows 文件边界是 partial；DSH 工具链外的代码也不受本策略覆盖。',
   acknowledge: '我已了解风险，并愿意继续',
   cancel: '取消',
   confirm: '启用 Auto',
