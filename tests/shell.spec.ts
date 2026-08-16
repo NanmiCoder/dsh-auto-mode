@@ -106,9 +106,9 @@ describe('shell policy', () => {
       await writeFile(generated, 'export default {}\n')
       artifacts.settle(exec, { isError: false, value: 'created', content: [] } as unknown as ToolExecutionResult, liveRoots)
 
-      expect(assessShell(`rm -f ${generated}`, 'bash', liveRoots, artifacts, owner))
+      expect(assessShell('rm -f vitest.config.ts', 'bash', liveRoots, artifacts, owner))
         .toMatchObject({ decision: 'allow', classifierEligible: false })
-      expect(assessShell(`Remove-Item -Force ${generated}`, 'pwsh', liveRoots, artifacts, owner))
+      expect(assessShell('Remove-Item -Force vitest.config.ts', 'pwsh', liveRoots, artifacts, owner))
         .toMatchObject({ decision: 'allow', classifierEligible: false })
     } finally {
       await rm(workspace, { recursive: true, force: true })
