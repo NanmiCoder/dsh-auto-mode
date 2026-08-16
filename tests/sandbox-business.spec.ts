@@ -13,7 +13,6 @@ import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolStrReplaceEditor from '@deepseek-ai/dsh-tool-str-replace-editor'
@@ -55,6 +54,7 @@ interface BusinessPaths {
 }
 
 async function createBusinessHarness(userMessage: string | ((paths: BusinessPaths) => string)): Promise<BusinessHarness> {
+  const { default: LocalSubprocessRuntime } = await import('@deepseek-ai/dsh-subprocess-local')
   const workspace = await mkdtemp(join(homedir(), 'dsh-auto-business-workspace-'))
   const outside = await mkdtemp(join(homedir(), 'dsh-auto-business-outside-'))
   tempDirs.push(workspace, outside)

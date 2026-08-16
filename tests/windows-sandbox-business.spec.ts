@@ -10,7 +10,6 @@ import SandboxPwshExecutor from '@deepseek-ai/dsh-pwsh-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import ToolRuntime, { type ToolExecutionInput, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
@@ -45,6 +44,7 @@ afterEach(async () => {
 })
 
 async function createWindowsHarness(userMessage: string | ((outside: string) => string)): Promise<WindowsHarness> {
+  const { default: LocalSubprocessRuntime } = await import('@deepseek-ai/dsh-subprocess-local')
   const workspace = await mkdtemp(join(homedir(), 'dsh-auto-windows-workspace-'))
   const outside = await mkdtemp(join(tmpdir(), 'dsh-auto-windows-outside-'))
   tempDirs.push(workspace, outside)
