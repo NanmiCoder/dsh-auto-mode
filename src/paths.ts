@@ -149,6 +149,7 @@ export function isProtectedProjectPath(target: string, roots: PolicyRoots): bool
   if (first !== undefined && ['.git', '.vscode', '.idea', '.husky', '.dsh'].includes(first)) return true
   const base = api.basename(normalized).toLowerCase()
   return ['.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.profile', '.mcp.json'].includes(base)
+    || base === '.env' || /^\.env(?:\.[a-z0-9-]+)+$/.test(base)
 }
 
 /** Deterministic destructive-target fuse. */
