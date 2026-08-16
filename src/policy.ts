@@ -35,6 +35,18 @@ function containsCredentialMaterial(argumentsValue: unknown): boolean {
     .test(serializedArguments(argumentsValue))
 }
 
+/**
+ * Strong credential material written into project files. Weak patterns such
+ * as `password = "..."` are deliberately excluded: they are routine in test
+ * fixtures and templates, and the classifier payload redacts content fields.
+ */
+function containsSecretMaterial(argumentsValue: unknown): boolean {
+  // gho_ (GitHub OAuth access token) 官方格式为前缀后 40 位;ghp_/ghu_/ghs_ 为 36 位。
+  // 初版 plan/spec 称四者同为 36 位与官方格式不符,最终 review 修正为拆分为 40/36 两支。
+  return /(?:-----BEGIN (?:RSA |OPENSSH |EC |ECDSA |DSA |ENCRYPTED )?PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgho_[A-Za-z0-9]{40}\b|\bgh[pus]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b|\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b)/i
+    .test(serializedArguments(argumentsValue))
+}
+
 const DESTRUCTIVE_TOOL = /(?:^|[_-])(?:delete|destroy|remove|erase|purge|drop|truncate|wipe|unlink|rmdir|reset|revoke)(?:$|[_-])/i
 const EXTERNAL_WRITE_TOOL = /(?:^|[_-])(?:deploy|publish|push|upload|send|post|release|merge|submit|create[-_]?(?:issue|pull[-_]?request))(?:$|[_-])/i
 const SECURITY_CHANGE_TOOL = /(?:^|[_-])(?:chmod|chown|permission|permissions|policy|grant|revoke|role|credential|credentials|secret|secrets|auth)(?:$|[_-])/i
@@ -158,6 +170,9 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
       return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
     }
+    if (containsSecretMaterial(exec.arguments)) {
+      return { decision: 'ask', reason: 'file content contains credential or private-key material; specific user authorization required', classifierEligible: true }
+    }
     return { decision: 'allow', reason: 'routine project-local file edit', classifierEligible: false }
   }
 
@@ -176,6 +191,13 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
       return isWithin(roots.workspace, normalized)
         ? { decision: 'allow', reason: 'read-only project inspection', classifierEligible: false }
         : { decision: 'ask', reason: `reading outside the workspace requires semantic review: ${normalized}`, classifierEligible: true }
+    }
+    // 密钥检查必须先于路径检查:str_replace_editor 的 old_str/new_str/file_text 不在分类器
+    // CONTENT_KEYS 脱敏范围内,携带凭据的 protected/external 路径写入(如 AKIA… 写 .env)若先
+    // 命中路径分支会以 classifierEligible:true 把凭据明文送进分类器(I-2 复刻),必须硬 ask。
+    // view 命令在上面已提前返回,不受此检查影响。
+    if (containsSecretMaterial(exec.arguments)) {
+      return { decision: 'ask', reason: 'file content contains credential or private-key material; specific user authorization required', classifierEligible: false }
     }
     if (!isWithin(roots.workspace, normalized) || isProtectedProjectPath(normalized, roots)) {
       return { decision: 'ask', reason: `mutation of external or protected path requires specific user authorization: ${normalized}`, classifierEligible: true }
