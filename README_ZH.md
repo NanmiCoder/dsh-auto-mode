@@ -87,7 +87,7 @@ Sandbox 只限制“写到哪里”，不会阻止删除工作区内已有数据
 | 多目标、glob、变量、管道输入、嵌套解释器删除 | 后台拒绝，要求 Agent 拆成每次一个可见字面目标 |
 | 根目录、Home、DSH_HOME、系统/凭据关键路径 | 无条件拒绝 |
 
-Session 产物包括 Shell 重定向、文件系统工具和官方字符串编辑器创建的文件。它们按设备号、inode、出生时间和类型记录；递归清理还要求目录树中的每个当前对象都能匹配 Session 记录。路径被重命名、替换、换成符号链接，或新目录中混入旧文件后，不再享有自动清理资格。用户未明确要求永久删除时，Agent 指引会优先建议移动、备份或版本控制删除。
+Session 产物包括 Shell 重定向、任意成功的 Shell 工具与项目脚手架、文件系统工具和官方字符串编辑器创建的文件。对于 Shell 工具，Auto 会在调用前后比较一次有上限的 workspace 快照；workspace 过大时只保留安全的直属子目录回退，因此可识别新生成的完整项目，但不会把已有项目中的文件误算成新文件。产物按设备号、inode、出生时间和类型记录；递归清理还要求目录树中的每个当前对象都能匹配 Session 记录。路径被重命名、替换、换成符号链接，或新目录中混入旧文件后，不再享有自动清理资格。用户未明确要求永久删除时，Agent 指引会优先建议移动、备份或版本控制删除。
 
 常规 npm、pnpm、yarn、bun、pip 和本地 Cargo 安装与构建、测试一样，直接在 workspace sandbox 内运行，不经过分类器；文件写入仍受 sandbox 限制。`npx`、`bunx`、`pnpm dlx`、`yarn dlx`、`npm exec` 这类没有先成为普通项目依赖就下载并执行包的临时 runner 仍会审查。敏感读取、网络传输和外部系统副作用也仍会审查。
 
@@ -110,7 +110,7 @@ Full access 是用户明确选择的无沙箱、免审批模式，插件不能�
   config:
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
-    classifierTimeoutMs: 8000
+    classifierTimeoutMs: 30000
     classifierMaxOutputTokens: 1024
 ```
 

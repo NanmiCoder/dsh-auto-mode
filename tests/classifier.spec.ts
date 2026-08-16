@@ -114,6 +114,28 @@ describe('native DSH classifier', () => {
       .rejects.toThrow('provider offline')
   })
 
+  it('distinguishes classifier timeout from cancellation of the pending tool call', async () => {
+    const abortOnlyRuntime = {
+      stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+        return (async function* () {
+          await new Promise<void>((_resolve, reject) => {
+            const abort = () => reject(new Error('DeepSeek request aborted by caller'))
+            if (options.signal.aborted) abort()
+            else options.signal.addEventListener('abort', abort, { once: true })
+          })
+          yield { type: 'finish', reason: { kind: 'stop' } } as const
+        })()
+      },
+    }
+    await expect(createDshClassifier(abortOnlyRuntime, { timeoutMs: 10 }).classify(input, new AbortController().signal))
+      .rejects.toThrow('classifier timed out after 10ms')
+
+    const caller = new AbortController()
+    caller.abort()
+    await expect(createDshClassifier(abortOnlyRuntime, { timeoutMs: 1_000 }).classify(input, caller.signal))
+      .rejects.toThrow('classifier request cancelled because the pending tool call was aborted')
+  })
+
   it('requires provider and model overrides as a pair', () => {
     const runtime = { stream: vi.fn() as unknown as (options: GenerateOptions) => AsyncIterable<StreamChunk> }
     expect(() => createDshClassifier(runtime, { timeoutMs: 1_000, provider: 'deepseek-official' })).toThrow(/together/)

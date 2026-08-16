@@ -115,6 +115,36 @@ describe('shell policy', () => {
     }
   })
 
+  it('discovers files created indirectly by a shell process without trusting replaced pre-existing paths', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-auto-shell-artifact-'))
+    try {
+      const liveRoots = resolveRoots(workspace, { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+      const artifacts = new ArtifactRegistry()
+      const owner = {}
+      const source = join(workspace, 'src')
+      const generated = join(source, 'App.css')
+      const preExisting = join(source, 'keep.css')
+      await mkdir(source)
+      await writeFile(preExisting, 'valuable\n')
+      const exec = { name: 'bash', token: Symbol('shell-scaffolder'), agent: { session: owner } } as unknown as ToolExecution
+      artifacts.discoverShellCreates(exec, liveRoots)
+      await writeFile(generated, '.app {}\n')
+      await writeFile(preExisting, 'replaced\n')
+      artifacts.settle(exec, {
+        isError: false,
+        value: { exitCode: 0, stdout: '', stderr: '' },
+        content: [],
+      } as unknown as ToolExecutionResult, liveRoots)
+
+      expect(assessShell('rm -f src/App.css', 'bash', liveRoots, artifacts, owner))
+        .toMatchObject({ decision: 'allow', classifierEligible: false })
+      expect(assessShell('rm -f src/keep.css', 'bash', liveRoots, artifacts, owner))
+        .toMatchObject({ decision: 'ask', classifierEligible: true })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('allows read-only find exec placeholders in workspaces and temporary roots', () => {
     const artifacts = new ArtifactRegistry()
     const command = 'find /tmp/Agent111TeamsTodo111233dd2BB -type f -exec ls -la {} \\; 2>/dev/null | head -40'

@@ -252,6 +252,24 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
     expect(harness.classifierCalls).toEqual([])
   })
 
+  it('removes a file generated indirectly by a real shell scaffolder without invoking the classifier', async () => {
+    const harness = await createBusinessHarness('Create the project scaffold and remove its unused App.css template file.')
+    await mkdir(join(harness.workspace, 'src'))
+    const generated = join(harness.workspace, 'src', 'App.css')
+    const scaffolded = await harness.run(
+      'shell-scaffold',
+      `node -e ${shellQuote("require('node:fs').writeFileSync('src/App.css', '.app {}\\n')")}`,
+    )
+    expect(scaffolded.isError).toBe(false)
+    expect(await readFile(generated, 'utf8')).toBe('.app {}\n')
+
+    const removed = await harness.run('remove-shell-generated-template', 'rm -f src/App.css && echo removed App.css')
+
+    expect(removed.isError).toBe(false)
+    expect(existsSync(generated)).toBe(false)
+    expect(harness.classifierCalls).toEqual([])
+  })
+
   it('builds and tests a multi-package project with real Node, pipelines, and generated artifacts', async () => {
     const harness = await createBusinessHarness('Build and test every package, then generate the aggregate report.')
     await mkdir(join(harness.workspace, 'packages', 'orders'), { recursive: true })

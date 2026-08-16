@@ -59,7 +59,7 @@ export const Config: z<Config> = z.object({
   classifierProvider: z.string(),
   classifierModel: z.string(),
   classifierApiKeyEnv: z.string().default('DEEPSEEK_API_KEY'),
-  classifierTimeoutMs: z.number().default(8_000),
+  classifierTimeoutMs: z.number().default(30_000),
   classifierMaxOutputTokens: z.number().default(1_024),
 })
 
@@ -114,7 +114,7 @@ export function autoPermissionAuthority(
 }
 
 function classifierFrom(ctx: Context, config: Config): SafetyClassifier {
-  const timeoutMs = config.classifierTimeoutMs ?? 8_000
+  const timeoutMs = config.classifierTimeoutMs ?? 30_000
   if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000) {
     throw new Error('classifierTimeoutMs must be between 100 and 60000')
   }
@@ -226,6 +226,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         return { kind: 'deny', reason: '[auto-mode delegated escalation denied] a subagent cannot widen the parent workspace sandbox; report the blocked action to the parent' }
       }
     } else if (assessment.decision === 'allow') {
+      artifacts.discoverShellCreates(exec, roots)
       return next()
     }
     if (escalation === undefined && !assessment.classifierEligible) {
@@ -257,6 +258,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (failureOwner !== undefined) classifierFailures.delete(failureOwner)
       if (decision.decision === 'allow') {
         if (escalation !== undefined) grants.plan(exec, escalation)
+        else artifacts.discoverShellCreates(exec, roots)
         return next()
       }
       if (decision.decision === 'deny') return { kind: 'deny', reason: `[auto-mode classifier deny] ${decision.reason}` }

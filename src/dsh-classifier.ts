@@ -96,8 +96,18 @@ export function createDshClassifier(runtime: LlmStreamRuntime, config: DshClassi
         maxTokens: config.maxOutputTokens ?? 1_024,
         signal: combined,
       }
-      const response = await collectResponse(runtime, options)
-      return parseClassifierDecision(JSON.parse(jsonText(response)))
+      try {
+        const response = await collectResponse(runtime, options)
+        return parseClassifierDecision(JSON.parse(jsonText(response)))
+      } catch (error: unknown) {
+        if (signal.aborted) {
+          throw new Error('classifier request cancelled because the pending tool call was aborted', { cause: error })
+        }
+        if (timeout.aborted) {
+          throw new Error(`classifier timed out after ${config.timeoutMs}ms`, { cause: error })
+        }
+        throw error
+      }
     },
   }
 }

@@ -87,7 +87,7 @@ The sandbox controls where a process writes, not whether deleting existing works
 | Multiple targets, globs, variables, piped operands, or nested-interpreter deletion | deny in the background and require one visible literal target per call |
 | Filesystem root, Home, DSH_HOME, system, or credential-critical paths | deny unconditionally |
 
-Session artifacts include files created through shell redirection, filesystem tools, and the official string-replacement editor. They are tracked by device, inode, birth time, and kind; recursive cleanup additionally requires every current object in the tree to match the Session registry. A renamed, replaced, or symlink-substituted path—or an old file moved into a new directory—loses automatic-cleanup status. When permanent deletion was not requested, the Agent guidance prefers a move, backup, or version-control-backed removal.
+Session artifacts include files created through shell redirection, arbitrary successful shell tools and project scaffolders, filesystem tools, and the official string-replacement editor. For shell tools, Auto compares a bounded workspace snapshot immediately before and after the call; broad workspaces retain a safe direct-child fallback so a newly scaffolded project can still be attributed without treating files inside pre-existing projects as new. Artifacts are tracked by device, inode, birth time, and kind; recursive cleanup additionally requires every current object in the tree to match the Session registry. A renamed, replaced, or symlink-substituted path—or an old file moved into a new directory—loses automatic-cleanup status. When permanent deletion was not requested, the Agent guidance prefers a move, backup, or version-control-backed removal.
 
 Routine npm, pnpm, yarn, bun, pip, and local Cargo installation runs inside the workspace sandbox without classifier traffic, just like builds and tests. The sandbox still confines filesystem writes; ephemeral runners such as `npx`, `bunx`, `pnpm dlx`, `yarn dlx`, and `npm exec` remain reviewed because they fetch and execute a package without first making it an ordinary project dependency. Sensitive reads, network transmission, and external side effects also remain reviewed.
 
@@ -110,7 +110,7 @@ No extra endpoint or API key is needed by default. Auto uses the current Session
   config:
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
-    classifierTimeoutMs: 8000
+    classifierTimeoutMs: 30000
     classifierMaxOutputTokens: 1024
 ```
 

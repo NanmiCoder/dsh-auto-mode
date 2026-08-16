@@ -95,31 +95,41 @@ export function createHttpClassifier(config: HttpClassifierConfig): SafetyClassi
     async classify(input: ClassifierInput, signal: AbortSignal): Promise<ClassifierDecision> {
       const timeout = AbortSignal.timeout(config.timeoutMs)
       const combined = AbortSignal.any([signal, timeout])
-      const response = await fetchImpl(config.endpoint, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(config.apiKey === undefined ? {} : { authorization: `Bearer ${config.apiKey}` }),
-        },
-        body: JSON.stringify({
-          model: config.model,
-          temperature: 0,
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: CLASSIFIER_SYSTEM_PROMPT,
-            },
-            { role: 'user', content: JSON.stringify(input) },
-          ],
-        }),
-        signal: combined,
-      })
-      if (!response.ok) throw new Error(`classifier HTTP ${response.status}`)
-      const responseText = await response.text()
-      if (responseText.length > 20_000) throw new Error('classifier response is too large')
-      const body: unknown = JSON.parse(responseText)
-      return parseClassifierDecision(JSON.parse(responseContent(body)))
+      try {
+        const response = await fetchImpl(config.endpoint, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(config.apiKey === undefined ? {} : { authorization: `Bearer ${config.apiKey}` }),
+          },
+          body: JSON.stringify({
+            model: config.model,
+            temperature: 0,
+            response_format: { type: 'json_object' },
+            messages: [
+              {
+                role: 'system',
+                content: CLASSIFIER_SYSTEM_PROMPT,
+              },
+              { role: 'user', content: JSON.stringify(input) },
+            ],
+          }),
+          signal: combined,
+        })
+        if (!response.ok) throw new Error(`classifier HTTP ${response.status}`)
+        const responseText = await response.text()
+        if (responseText.length > 20_000) throw new Error('classifier response is too large')
+        const body: unknown = JSON.parse(responseText)
+        return parseClassifierDecision(JSON.parse(responseContent(body)))
+      } catch (error: unknown) {
+        if (signal.aborted) {
+          throw new Error('classifier request cancelled because the pending tool call was aborted', { cause: error })
+        }
+        if (timeout.aborted) {
+          throw new Error(`classifier timed out after ${config.timeoutMs}ms`, { cause: error })
+        }
+        throw error
+      }
     },
   }
 }
