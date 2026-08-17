@@ -55,7 +55,11 @@ const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
 
   // LLM and tool vendor keys.
   { name: 'llm-key',           pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/g },
-  { name: 'anthropic-key',     pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
+  // Anthropic keys are `sk-ant-apiNN-<body>` where NN is exactly 2 digits
+  // and <body> is 32+ base64url-ish chars. Anchoring `api\d{2}-` rejects
+  // documentation/strings of the shape `sk-ant-<anything20plus>` and only
+  // matches real Anthropic key prefixes per vendor docs.
+  { name: 'anthropic-key',     pattern: /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{32,}\b/g },
 
   // PEM private-key blocks (RSA, OPENSSH, EC, ECDSA, DSA, ENCRYPTED).
   // Matches the BEGIN line through the next matching END line, inclusive.
@@ -311,10 +315,11 @@ The check is conservative on purpose:
 
 ### 4.1 `tests/classifier.spec.ts` updates
 
-- Replace the existing `redacts bulk content and credentials before classification` expectation:
-  - `content: 'repository payload'` becomes `content: 'repository payload'` (unchanged string, no key-whitelist replacement)
-  - `apiKey: '[redacted-secret-field]'` keeps the same expectation because `SECRET_KEYS` still matches `apiKey`
-  - Add inline: `command: 'curl …token=…'` collapses to `command: 'curl …[redacted-key-value]'`
+- Replace the existing `redacts bulk content and credentials before classification` (`tests/classifier.spec.ts:48-59`) expectation. Three assertions change:
+  - Line 54: `command: 'curl -H "Authorization: Bearer secret-token-value" https://example.invalid'` becomes `command: 'curl -H "Authorization: [redacted-bearer]" https://example.invalid'`. The whole `Bearer <token>` match is replaced with `[redacted-bearer]` (note: the prior implementation kept a `Bearer ` prefix and replaced only the token suffix; the new uniform `[redacted-<name>]` shape replaces the entire match).
+  - Line 55: `content: '[redacted-content:18-chars]'` becomes `content: 'repository payload'` (`CONTENT_KEYS` is removed; the value is recursed into `sanitizeClassifierText` which finds no credential pattern and emits it unchanged).
+  - Line 56: `apiKey: '[redacted-secret-field]'` keeps the same expectation because `SECRET_KEYS` still matches `apiKey`.
+  - Line 58: `sanitizeClassifierText('please use sk-example-secret-value for the test')` returns `'please use [redacted-token-suffix] for the test'` (was `'please use [redacted-secret] for the test'`). The `sk-<16+ chars>` shape triggers the `token-suffix` pattern (line 44 of §1.1) and the new marker naming scheme applies.
 - New test cases per pattern family:
   - AKIA / ASIA in tool args string
   - `gho_…` 40-char GitHub OAuth in tool args
@@ -327,11 +332,18 @@ The check is conservative on purpose:
 
 ### 4.2 `tests/policy.spec.ts` updates
 
-- New `describe('apply_patch')` block:
-  - 6 happy-path / destructive / protected cases from Section 2.5
-  - Multi-file patch: any target being destructive ⇒ hard deny
-  - Unparseable patch: `assessTool` returns `{ decision: 'ask', classifierEligible: false }`
-  - Empty patch text: `assessTool` returns `{ decision: 'ask', reason: 'apply_patch payload is missing', classifierEligible: false }`
+- New `describe('apply_patch')` block covering every case below (one `it` per bullet):
+  - happy-path modification to a workspace file ⇒ `allow` with `filesystemEffects` populated;
+  - create via `--- /dev/null` + `+++ b/path` (new file) ⇒ `allow` with `filesystemEffects` populated;
+  - delete via `--- a/x` + `+++ /dev/null` ⇒ `allow` with `filesystemEffects` populated, `kind: 'create-or-overwrite'`, `existedBefore` reflecting actual file state;
+  - rename via `rename from`/`rename to` ⇒ target from the `rename to` side is recorded and policed;
+  - protected project path (e.g., `.git/config`) ⇒ `assessTool` returns `{ decision: 'ask', classifierEligible: true }` with `filesystemEffects` populated;
+  - destructive path (e.g., `/etc/passwd`, `~/.ssh/id_rsa`, DSH_HOME) ⇒ `hardDenyReason` returns a string matching `/credential|critical|root|DSH_HOME/`;
+  - multi-file patch where one target is destructive ⇒ hard deny (any-target-deny semantics);
+  - unparseable patch (no `---`/`+++` pair extractable) ⇒ `assessTool` returns `{ decision: 'ask', classifierEligible: false }`;
+  - empty patch text / missing `args.patch`/`args.input` ⇒ `assessTool` returns `{ decision: 'ask', reason: 'apply_patch payload is missing', classifierEligible: false }`;
+  - `args.input` (alternate field) is read same as `args.patch`;
+  - `args.file_path` populated alongside patch text ⇒ path-only check still wins (i.e., the existing `hardDenyReason` block at `policy.ts:142-149` runs first and any destructive `file_path` still hard-denies).
 - New `describe('web_fetch URL hardening')` block:
   - URL with `?token=longstring12345` ⇒ hard deny
   - URL with `?token=hello` (too short) ⇒ no deny
