@@ -57,6 +57,35 @@ describe('HTTP classifier', () => {
     })
     expect(sanitizeClassifierText('please use sk-example-secret-value for the test')).toBe('please use [redacted-secret] for the test')
   })
+
+  it('redacts editor and patch bodies without depending on a tool name', () => {
+    const oldStr = 'const previous = "sensitive source"'
+    const newStr = 'const next = "replacement source"'
+    const fileText = 'PRIVATE FILE BODY'
+    const patch = '@@ -1 +1 @@\n-secret\n+replacement'
+    const replacementText = 'camel-case schema body'
+    const sanitized = sanitizeClassifierArguments({
+      command: 'str_replace',
+      path: '/work/repo/src/config.ts',
+      old_str: oldStr,
+      new_str: newStr,
+      nested: { file_text: fileText, patch, replacementText },
+    })
+
+    expect(sanitized).toEqual({
+      command: 'str_replace',
+      path: '/work/repo/src/config.ts',
+      old_str: `[redacted-old_str:${oldStr.length}-chars]`,
+      new_str: `[redacted-new_str:${newStr.length}-chars]`,
+      nested: {
+        file_text: `[redacted-file_text:${fileText.length}-chars]`,
+        patch: `[redacted-patch:${patch.length}-chars]`,
+        replacementText: `[redacted-replacementText:${replacementText.length}-chars]`,
+      },
+    })
+    expect(JSON.stringify(sanitized)).not.toContain('sensitive source')
+    expect(JSON.stringify(sanitized)).not.toContain('PRIVATE FILE BODY')
+  })
 })
 
 describe('native DSH classifier', () => {

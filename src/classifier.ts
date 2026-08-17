@@ -29,8 +29,22 @@ export interface HttpClassifierConfig {
   readonly fetchImpl?: typeof fetch
 }
 
-const CONTENT_KEYS = /^(?:content|body|payload|data|text|old_string|new_string|description|justification)$/i
+const CONTENT_KEY_TERMS = new Set(['body', 'content', 'data', 'diff', 'patch', 'payload', 'str', 'string', 'text'])
+const ALWAYS_REDACTED_TEXT_KEYS = new Set(['description', 'justification'])
 const SECRET_KEYS = /(?:api|auth|access|secret|private|credential|password|token|cookie|authorization).*?(?:key|value|token)?$/i
+
+/** Recognize body-like fields across snake_case, kebab-case, and camelCase schemas. */
+function isBulkContentKey(key: string): boolean {
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  const normalized = words.join('_')
+  const last = words.at(-1)
+  return ALWAYS_REDACTED_TEXT_KEYS.has(normalized)
+    || (last !== undefined && CONTENT_KEY_TERMS.has(last))
+}
 
 /** Redact likely secrets and bound one classifier-visible text value. */
 export function sanitizeClassifierText(value: string): string {
@@ -52,7 +66,7 @@ export function sanitizeClassifierArguments(value: unknown, depth = 0): unknown 
   for (const [key, entry] of Object.entries(value).slice(0, 50)) {
     if (SECRET_KEYS.test(key)) {
       output[key] = '[redacted-secret-field]'
-    } else if (CONTENT_KEYS.test(key) && typeof entry === 'string') {
+    } else if (isBulkContentKey(key) && typeof entry === 'string') {
       output[key] = `[redacted-${key}:${entry.length}-chars]`
     } else {
       output[key] = sanitizeClassifierArguments(entry, depth + 1)
