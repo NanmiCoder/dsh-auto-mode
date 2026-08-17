@@ -32,13 +32,83 @@ export interface HttpClassifierConfig {
 const CONTENT_KEYS = /^(?:content|body|payload|data|text|old_string|new_string|description|justification)$/i
 const SECRET_KEYS = /(?:api|auth|access|secret|private|credential|password|token|cookie|authorization).*?(?:key|value|token)?$/i
 
-/** Redact likely secrets and bound one classifier-visible text value. */
+interface CredentialPattern {
+  readonly name: string
+  readonly pattern: RegExp
+}
+
+const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
+  // Order is most-specific-first so a broader pattern does not consume a
+  // token-shaped substring that a more specific pattern below should own.
+  // e.g. `token-suffix` matches the body of `sk-ant-api\d{2}-...`, so the
+  // Anthropic/GitHub/LLM patterns must run first to claim their tokens.
+
+  // Anthropic keys are `sk-ant-apiNN-<body>` where NN is exactly 2 digits
+  // and <body> is 32+ base64url-ish chars. Anchoring `api\d{2}-` rejects
+  // documentation/strings of the shape `sk-ant-<anything20plus>` and only
+  // matches real Anthropic key prefixes per vendor docs.
+  { name: 'anthropic-key',     pattern: /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{32,}\b/g },
+
+  // GitHub token formats (gho_ is 40; gh[pus]_ is 36; github_pat_ has 22+).
+  { name: 'github-oauth',      pattern: /\bgho_[A-Za-z0-9]{40}\b/g },
+  { name: 'github-classic',    pattern: /\bgh[pus]_[A-Za-z0-9]{36}\b/g },
+  { name: 'github-fine-pat',   pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g },
+
+  // AWS access-key IDs (16 chars after the prefix).
+  { name: 'aws-access-key',    pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
+
+  // LLM and tool vendor keys.
+  { name: 'llm-key',           pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/g },
+
+  // Broad fallback: any `sk|ghp|github_pat|xox[baprs]` followed by 8+ chars.
+  // Must come after the vendor-specific patterns above so they own their tokens.
+  { name: 'token-suffix',      pattern: /\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/g },
+
+  { name: 'bearer',            pattern: /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/gi },
+  { name: 'key-value',         pattern: /((?:api[_-]?key|token|secret|password)=)[^&\s]+/gi },
+
+  // PEM private-key blocks (RSA, OPENSSH, EC, ECDSA, DSA, ENCRYPTED).
+  // Matches the BEGIN line through the next matching END line, inclusive.
+  { name: 'pem-private-key',
+    pattern: /-----BEGIN (?:RSA |OPENSSH |EC |ECDSA |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |ECDSA |DSA |ENCRYPTED )?PRIVATE KEY-----/g },
+]
+
+/** Redact pattern-matched credential content and surface which patterns fired. */
+export interface ClassifierRedaction {
+  readonly value: string
+  readonly redactedNames: readonly string[]
+}
+
+/**
+ * Run every entry in {@link CREDENTIAL_PATTERNS} against the input. Each match
+ * is replaced with `[redacted-<name>]`; each unique name that fires is appended
+ * to `redactedNames` in the order it appears in the patterns table. Truncated
+ * to `maxLength` when the redacted value would otherwise exceed it.
+ *
+ * This is content-first: a credential-shaped substring anywhere in the input is
+ * redacted regardless of the field name it sits under. Key-name matching is
+ * still applied one layer up in {@link sanitizeClassifierArguments} for
+ * defense-in-depth on `SECRET_KEYS`.
+ */
+export function redactClassifierText(value: string, maxLength = 1_000): ClassifierRedaction {
+  let current = value
+  const redactedNames: string[] = []
+  for (const { name, pattern } of CREDENTIAL_PATTERNS) {
+    const before = current
+    current = current.replace(pattern, `[redacted-${name}]`)
+    if (current !== before && !redactedNames.includes(name)) redactedNames.push(name)
+  }
+  if (current.length > maxLength) current = current.slice(0, maxLength)
+  return { value: current, redactedNames }
+}
+
+/**
+ * Public thin wrapper over {@link redactClassifierText}. The kept signature
+ * preserves consumer call sites in `src/index.ts` (`trustedUserMessages`,
+ * `sandboxRequest.justification`) — see spec §1.4.
+ */
 export function sanitizeClassifierText(value: string): string {
-  return value
-    .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/g, '[redacted-secret]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/gi, 'Bearer [redacted-secret]')
-    .replace(/((?:api[_-]?key|token|secret|password)=)[^&\s]+/gi, '$1[redacted-secret]')
-    .slice(0, 1_000)
+  return redactClassifierText(value).value
 }
 
 /** Remove bulk content and likely secrets before crossing the classifier network boundary. */

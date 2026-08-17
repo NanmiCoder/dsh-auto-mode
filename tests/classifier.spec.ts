@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { CLASSIFIER_SYSTEM_PROMPT, createHttpClassifier, parseClassifierDecision, sanitizeClassifierArguments, sanitizeClassifierText } from '../src/classifier.js'
+import { CLASSIFIER_SYSTEM_PROMPT, createHttpClassifier, parseClassifierDecision, redactClassifierText, sanitizeClassifierArguments, sanitizeClassifierText } from '../src/classifier.js'
 import { createDshClassifier } from '../src/dsh-classifier.js'
 
 const input = {
@@ -139,5 +139,86 @@ describe('native DSH classifier', () => {
   it('requires provider and model overrides as a pair', () => {
     const runtime = { stream: vi.fn() as unknown as (options: GenerateOptions) => AsyncIterable<StreamChunk> }
     expect(() => createDshClassifier(runtime, { timeoutMs: 1_000, provider: 'deepseek-official' })).toThrow(/together/)
+  })
+})
+
+describe('redactClassifierText', () => {
+  it('redacts AKIA / ASIA AWS access-key IDs', () => {
+    const result = redactClassifierText('export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE')
+    expect(result.value).toBe('export AWS_ACCESS_KEY_ID=[redacted-aws-access-key]')
+    expect(result.redactedNames).toContain('aws-access-key')
+  })
+
+  it('redacts github classic / user / server PATs (gh[pus]_<36>)', () => {
+    const result = redactClassifierText('token = ghp_012345678901234567890123456789012345')
+    expect(result.value).toBe('token = [redacted-github-classic]')
+    expect(result.redactedNames).toContain('github-classic')
+    const user = redactClassifierText('token = ghu_012345678901234567890123456789012345')
+    expect(user.value).toBe('token = [redacted-github-classic]')
+    const server = redactClassifierText('token = ghs_012345678901234567890123456789012345')
+    expect(server.value).toBe('token = [redacted-github-classic]')
+  })
+
+  it('redacts gho_ github OAuth access tokens (40 chars)', () => {
+    const result = redactClassifierText('token = gho_0123456789abcdef0123456789abcdef01234567')
+    expect(result.value).toBe('token = [redacted-github-oauth]')
+    expect(result.redactedNames).toContain('github-oauth')
+  })
+
+  it('redacts github_pat_ fine-grained PATs (22+ chars body)', () => {
+    const result = redactClassifierText('token = github_pat_0123456789abcdef_0123456789abcdef')
+    expect(result.value).toBe('token = [redacted-github-fine-pat]')
+    expect(result.redactedNames).toContain('github-fine-pat')
+  })
+
+  it('redacts sk- / sk-proj- LLM API keys (16+ chars)', () => {
+    const plain = redactClassifierText('sk-0123456789abcdef0123456789abcdef')
+    expect(plain.value).toBe('[redacted-llm-key]')
+    expect(plain.redactedNames).toContain('llm-key')
+    const proj = redactClassifierText('sk-proj-0123456789abcdef0123456789abcdef')
+    expect(proj.value).toBe('[redacted-llm-key]')
+  })
+
+  it('redacts Anthropic keys only when anchored to sk-ant-api<NN>-<32+>', () => {
+    // Real Anthropic key (api03 + 40-char body) — matches.
+    const real = redactClassifierText('sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890')
+    expect(real.value).toBe('[redacted-anthropic-key]')
+    // Documentation strings without the api<NN>- prefix — DO NOT match.
+    expect(redactClassifierText('uses sk-ant-abcdefghij1234567890 in config').redactedNames)
+      .not.toContain('anthropic-key')
+    // Single-digit api version — does NOT match.
+    expect(redactClassifierText('sk-ant-api3-abcdefghijklmnopqrstuvwxyz123456').redactedNames)
+      .not.toContain('anthropic-key')
+  })
+
+  it('redacts a complete PEM private-key block (BEGIN ... END inclusive)', () => {
+    const pem = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'abc',
+      'def',
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n')
+    const result = redactClassifierText(pem)
+    expect(result.value).toBe('[redacted-pem-private-key]')
+    expect(result.redactedNames).toContain('pem-private-key')
+  })
+
+  it('redacts multiple credential shapes in one input and lists each name once', () => {
+    const input = 'AKIAIOSFODNN7EXAMPLE sk-ant-api03-abcabcabcabcabcabcabcabcabcabc12AKIAL'
+    const result = redactClassifierText(input)
+    expect(result.redactedNames).toContain('aws-access-key')
+    expect(result.redactedNames).toContain('anthropic-key')
+  })
+
+  it('emits the input unchanged when no pattern matches', () => {
+    const input = 'just a plain string with no credentials'
+    const result = redactClassifierText(input)
+    expect(result.value).toBe(input)
+    expect(result.redactedNames).toEqual([])
+  })
+
+  it('truncates the redacted value to maxLength when supplied', () => {
+    const result = redactClassifierText('A'.repeat(2000), 100)
+    expect(result.value.length).toBe(100)
   })
 })
