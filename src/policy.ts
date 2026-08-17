@@ -2,6 +2,7 @@ import { lstatSync } from 'node:fs'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { ArtifactRegistry } from './artifacts.js'
 import {
+  extractApplyPatchPaths,
   hardDestructiveTargetReason,
   isProtectedProjectPath,
   isWithin,
@@ -147,6 +148,20 @@ export function hardDenyReason(exec: Readonly<ToolExecution>, roots: PolicyRoots
       if (reason !== undefined) return `mutation targets ${reason}`
     }
   }
+  if (exec.name === 'apply_patch') {
+    const argsForPatch = record(exec.arguments)
+    const patch = typeof argsForPatch?.patch === 'string'
+      ? argsForPatch.patch
+      : typeof argsForPatch?.input === 'string' ? argsForPatch.input : undefined
+    if (patch !== undefined) {
+      const targets = extractApplyPatchPaths(patch)
+      for (const raw of targets) {
+        const normalized = normalizePath(raw, roots.workspace, roots.home)
+        const reason = hardDestructiveTargetReason(normalized, roots)
+        if (reason !== undefined) return `apply_patch targets ${reason}`
+      }
+    }
+  }
   if (DESTRUCTIVE_TOOL.test(exec.name)) {
     const path = pathArgument(args)
     if (path !== undefined) {
@@ -203,6 +218,48 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     }
   }
 
+  if (exec.name === 'apply_patch') {
+    const argsForPatch = record(exec.arguments)
+    const patch = typeof argsForPatch?.patch === 'string'
+      ? argsForPatch.patch
+      : typeof argsForPatch?.input === 'string' ? argsForPatch.input : undefined
+    if (patch === undefined) {
+      return { decision: 'ask', reason: 'apply_patch payload is missing', classifierEligible: false }
+    }
+    const targets = extractApplyPatchPaths(patch)
+    if (targets.length === 0) {
+      return {
+        decision: 'ask',
+        reason: 'apply_patch text cannot be parsed for target paths; manual approval required',
+        classifierEligible: false,
+      }
+    }
+    for (const raw of targets) {
+      const normalized = normalizePath(raw, roots.workspace, roots.home)
+      if (isProtectedProjectPath(normalized, roots)) {
+        return {
+          decision: 'ask',
+          reason: `apply_patch targets protected project metadata: ${normalized}`,
+          classifierEligible: true,
+          filesystemEffects: targets.map(p => ({
+            kind: 'create-or-overwrite' as const,
+            path: normalizePath(p, roots.workspace, roots.home),
+            existedBefore: existedBefore(normalizePath(p, roots.workspace, roots.home)),
+          })),
+        }
+      }
+    }
+    const effects = targets.map(p => {
+      const n = normalizePath(p, roots.workspace, roots.home)
+      return { kind: 'create-or-overwrite' as const, path: n, existedBefore: existedBefore(n) }
+    })
+    return {
+      decision: 'allow',
+      reason: 'apply_patch inside workspace is delegated to the filesystem sandbox',
+      classifierEligible: false,
+      filesystemEffects: effects,
+    }
+  }
 
   if (exec.name === 'str_replace_editor') {
     const command = args?.command

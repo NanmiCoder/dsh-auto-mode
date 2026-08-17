@@ -107,4 +107,128 @@ describe('tool policy', () => {
     expect(assessTool(execution('str_replace_editor', { command: 'create', path: '/work/repo/generated.ts' }), roots, artifacts))
       .toMatchObject({ plannedCreates: ['/work/repo/generated.ts'] })
   })
+
+  it('hard-denies apply_patch when any target is destructive', () => {
+    const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+    const patch = [
+      '--- a/src/ok.ts',
+      '+++ b/src/ok.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      '--- /home/dev/.ssh/id_rsa',
+      '+++ /home/dev/.ssh/id_rsa',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n')
+    const exec = execution('apply_patch', { patch })
+    expect(hardDenyReason(exec, roots)).toMatch(/credential|critical|root|DSH_HOME/)
+  })
+
+  it('hard-denies apply_patch targeting DSH_HOME', () => {
+    const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+    const patch = ['--- a/x', '+++ b/x', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+    const exec = execution('apply_patch', { patch, file_path: '/safe/dsh/settings.yaml' })
+    expect(hardDenyReason(exec, roots)).toMatch(/DSH_HOME/)
+  })
+
+  it('returns undefined for a benign apply_patch under hardDenyReason', () => {
+    const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+    const patch = ['--- a/src/ok.ts', '+++ b/src/ok.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+    expect(hardDenyReason(execution('apply_patch', { patch }), roots)).toBeUndefined()
+  })
+
+  it('allows a happy-path apply_patch on a workspace file with filesystemEffects', () => {
+    const artifacts = new ArtifactRegistry()
+    const out = assessTool(
+      execution('apply_patch', { patch: ['--- a/src/ok.ts', '+++ b/src/ok.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n') }),
+      roots,
+      artifacts,
+    )
+    expect(out.decision).toBe('allow')
+    expect(out.classifierEligible).toBe(false)
+    expect(out.filesystemEffects).toEqual([
+      { kind: 'create-or-overwrite', path: '/work/repo/src/ok.ts', existedBefore: expect.any(Boolean) as unknown as boolean },
+    ])
+  })
+
+  it('asks for apply_patch targeting protected project metadata', () => {
+    const artifacts = new ArtifactRegistry()
+    const out = assessTool(
+      execution('apply_patch', { patch: ['--- a/.git/config', '+++ b/.git/config', '@@ -1 +1 @@', '-old', '+new'].join('\n') }),
+      roots,
+      artifacts,
+    )
+    expect(out).toMatchObject({ decision: 'ask', classifierEligible: true })
+    expect(out.filesystemEffects?.[0]?.path).toBe('/work/repo/.git/config')
+  })
+
+  it('asks with classifierEligible false for an unparseable apply_patch (fail-closed)', () => {
+    const artifacts = new ArtifactRegistry()
+    const out = assessTool(
+      execution('apply_patch', { patch: 'this is not a patch at all' }),
+      roots,
+      artifacts,
+    )
+    expect(out).toMatchObject({ decision: 'ask', classifierEligible: false })
+  })
+
+  it('asks with classifierEligible false when apply_patch payload is missing', () => {
+    const artifacts = new ArtifactRegistry()
+    const out = assessTool(execution('apply_patch', {}), roots, artifacts)
+    expect(out).toMatchObject({ decision: 'ask', classifierEligible: false, reason: expect.stringMatching(/missing/) as unknown as string })
+  })
+
+  it('reads apply_patch payloads from args.input as well as args.patch', () => {
+    const artifacts = new ArtifactRegistry()
+    const patch = ['--- a/src/ok.ts', '+++ b/src/ok.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+    const outFromInput = assessTool(execution('apply_patch', { input: patch }), roots, artifacts)
+    expect(outFromInput.decision).toBe('allow')
+  })
+
+  it('handles create (--- /dev/null + +++ b/path) and delete (--- a/path + +++ /dev/null)', () => {
+    const artifacts = new ArtifactRegistry()
+    const create = assessTool(
+      execution('apply_patch', { patch: ['--- /dev/null', '+++ b/src/new.ts', '@@ -0,0 +1 @@', '+new'].join('\n') }),
+      roots,
+      artifacts,
+    )
+    expect(create.decision).toBe('allow')
+    expect(create.filesystemEffects?.[0]?.path).toBe('/work/repo/src/new.ts')
+
+    const del = assessTool(
+      execution('apply_patch', { patch: ['--- a/src/gone.ts', '+++ /dev/null', '@@ -1 +0,0 @@', '-gone'].join('\n') }),
+      roots,
+      artifacts,
+    )
+    expect(del.decision).toBe('allow')
+    expect(del.filesystemEffects?.[0]?.path).toBe('/work/repo/src/gone.ts')
+  })
+
+  it('records rename-to target paths and routes them through policy', () => {
+    const artifacts = new ArtifactRegistry()
+    const patch = [
+      'rename from src/old-name.ts',
+      'rename to src/new-name.ts',
+    ].join('\n')
+    const ok = assessTool(
+      execution('apply_patch', { patch: ['--- a/src/old-name.ts', '+++ b/src/new-name.ts', '@@ -0,0 +1 @@', '+x'].join('\n') + '\n' + patch }),
+      roots,
+      artifacts,
+    )
+    expect(ok.decision).toBe('allow')
+    const destructive = assessTool(
+      execution('apply_patch', { patch: ['--- a/.git/x', '+++ b/.git/x', '@@ -1 +1 @@', '-old', '+new', '\n', 'rename to .git/danger'].join('\n') }),
+      roots,
+      artifacts,
+    )
+    expect(destructive.decision).toBe('ask')
+  })
+
+  it('hard-deny takes precedence when args.file_path and patch text disagree', () => {
+    const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
+    const patch = ['--- a/src/ok.ts', '+++ b/src/ok.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+    expect(hardDenyReason(execution('apply_patch', { patch, file_path: '/safe/dsh/settings.yaml' }), roots)).toMatch(/DSH_HOME/)
+  })
 })
