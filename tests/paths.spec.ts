@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalizePosixSystemAlias,
   canonicalizeWindowsNamespace,
+  extractApplyPatchPaths,
   hardDestructiveTargetReason,
   isFilesystemRoot,
+  isProtectedProjectPath,
   isWithin,
   normalizePath,
   resolveRoots,
@@ -69,5 +71,100 @@ describe('path policy', () => {
     expect(hardDestructiveTargetReason('/safe/dsh/profiles', roots)).toMatch(/DSH_HOME/)
     expect(hardDestructiveTargetReason('/home/dev/.ssh/id_ed25519', roots)).toMatch(/critical/)
     expect(hardDestructiveTargetReason('/work/repo/src/a.ts', roots)).toBeUndefined()
+  })
+
+  it('extracts single-file modification paths from a patch', () => {
+    const patch = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      'index 0123..4567 100644',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      '+new',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['src/a.ts'])
+  })
+
+  it('records new file paths from --- /dev/null + +++ b/<path>', () => {
+    const patch = [
+      'diff --git a/src/new.ts b/src/new.ts',
+      'new file mode 100644',
+      'index 0000000..1234567',
+      '--- /dev/null',
+      '+++ b/src/new.ts',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['src/new.ts'])
+  })
+
+  it('records deleted file paths from --- a/<path> + +++ /dev/null', () => {
+    const patch = [
+      'diff --git a/src/old.ts b/src/old.ts',
+      'deleted file mode 100644',
+      'index 1234567..0000000',
+      '--- a/src/old.ts',
+      '+++ /dev/null',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['src/old.ts'])
+  })
+
+  it('records all target paths in a multi-file patch, deduplicated, in order', () => {
+    const patch = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- a/src/b.ts',
+      '+++ b/src/b.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1 +1 @@',
+      '-old2',
+      '+new2',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['src/a.ts', 'src/b.ts'])
+  })
+
+  it('records the destination path from rename from/rename to pairs', () => {
+    const patch = [
+      'diff --git a/src/old-name.ts b/src/new-name.ts',
+      'similarity index 100%',
+      'rename from src/old-name.ts',
+      'rename to src/new-name.ts',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['src/new-name.ts'])
+  })
+
+  it('returns [] for an unparseable patch (no +++ pair)', () => {
+    expect(extractApplyPatchPaths('--- a/x\n@@ -1 +1 @@\n-old\n')).toEqual([])
+  })
+
+  it('returns [] when patch text is empty or non-string', () => {
+    expect(extractApplyPatchPaths('')).toEqual([])
+    // @ts-expect-error: runtime contract accepts unknown inputs safely.
+    expect(extractApplyPatchPaths(undefined)).toEqual([])
+  })
+
+  it('strips the optional leading a/ or b/ from recorded paths', () => {
+    const patch = [
+      '--- a/foo.ts',
+      '+++ b/foo.ts',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['foo.ts'])
+  })
+
+  it('preserves raw paths (no normalization applied)', () => {
+    const patch = [
+      '--- a/CAPS.ts',
+      '+++ b/CAPS.ts',
+    ].join('\n')
+    expect(extractApplyPatchPaths(patch)).toEqual(['CAPS.ts'])
   })
 })

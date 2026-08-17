@@ -177,3 +177,78 @@ export function isArtifactArea(target: string, roots: PolicyRoots): boolean {
   const normalized = normalizePath(target, roots.workspace, roots.home)
   return isWithin(roots.workspace, normalized) || roots.tempRoots.some(root => isWithin(root, normalized))
 }
+
+/**
+ * Extract filesystem targets from a unified-diff style `apply_patch` payload.
+ *
+ * Walks the patch text once on a per-line basis and records:
+ *   - the destination path of every `--- a/<path>` + `+++ b/<path>` pair
+ *     (modify),
+ *   - `+++ b/<path>` when paired with `--- /dev/null` (new file),
+ *   - `--- a/<path>` when paired with `+++ /dev/null` (delete),
+ *   - the destination path of every `rename from` / `rename to` pair.
+ *
+ * Returns deduplicated, order-preserved paths with any leading `a/` or `b/`
+ * stripped. Paths are NOT normalized here — every caller passes the result
+ * through `normalizePath` so workspace-relative and absolute paths resolve
+ * the same way.
+ *
+ * Returns `[]` for empty input or any patch text where no `---` header can
+ * be paired with a `+++` header. Callers treat that as fail-closed
+ * (manual approval) rather than as a successful empty parse.
+ */
+export function extractApplyPatchPaths(patch: string): string[] {
+  if (typeof patch !== 'string' || patch === '') return []
+  const lines = patch.split(/\r?\n/)
+  const targets: string[] = []
+  const seen = new Set<string>()
+
+  const record = (raw: string | undefined): void => {
+    if (raw === undefined) return
+    if (raw === '' || raw === '/dev/null') return
+    const stripped = raw.startsWith('a/') || raw.startsWith('b/') ? raw.slice(2) : raw
+    if (!seen.has(stripped)) {
+      seen.add(stripped)
+      targets.push(stripped)
+    }
+  }
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.startsWith('--- ')) {
+      const minusRaw = line.slice(4)
+      const minusPath = minusRaw === '/dev/null'
+        ? undefined
+        : minusRaw.startsWith('a/') ? minusRaw.slice(2) : minusRaw
+
+      // Walk forward until we find the matching +++ header.
+      let j = i + 1
+      while (j < lines.length && !lines[j].startsWith('+++ ')) j++
+      if (j < lines.length) {
+        const plusRaw = lines[j].slice(4)
+        const plusPath = plusRaw === '/dev/null'
+          ? undefined
+          : plusRaw.startsWith('b/') ? plusRaw.slice(2) : plusRaw
+
+        if (minusPath === undefined && plusPath !== undefined) {
+          // New file: --- /dev/null + +++ b/<path> ⇒ record plus.
+          record(plusPath)
+        } else if (plusPath === undefined && minusPath !== undefined) {
+          // Delete: --- a/<path> + +++ /dev/null ⇒ record minus.
+          record(minusPath)
+        } else if (plusPath !== undefined) {
+          // Modify: record the destination path.
+          record(plusPath)
+        }
+        i = j + 1
+        continue
+      }
+    } else if (line.startsWith('rename to ')) {
+      record(line.slice('rename to '.length))
+    }
+    i++
+  }
+
+  return targets
+}
