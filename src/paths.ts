@@ -215,7 +215,7 @@ export function extractApplyPatchPaths(patch: string): string[] {
 
   let i = 0
   while (i < lines.length) {
-    const line = lines[i]
+    const line = lines[i] ?? ''
     if (line.startsWith('--- ')) {
       const minusRaw = line.slice(4)
       const minusPath = minusRaw === '/dev/null'
@@ -224,9 +224,9 @@ export function extractApplyPatchPaths(patch: string): string[] {
 
       // Walk forward until we find the matching +++ header.
       let j = i + 1
-      while (j < lines.length && !lines[j].startsWith('+++ ')) j++
+      while (j < lines.length && !(lines[j] ?? '').startsWith('+++ ')) j++
       if (j < lines.length) {
-        const plusRaw = lines[j].slice(4)
+        const plusRaw = (lines[j] ?? '').slice(4)
         const plusPath = plusRaw === '/dev/null'
           ? undefined
           : plusRaw.startsWith('b/') ? plusRaw.slice(2) : plusRaw
