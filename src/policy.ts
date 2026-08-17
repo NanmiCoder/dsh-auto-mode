@@ -46,6 +46,36 @@ function containsCredentialMaterial(argumentsValue: unknown): boolean {
     .test(serializedArguments(argumentsValue))
 }
 
+/** Parameter names that are commonly used to carry credentials in URLs. */
+const URL_CREDENTIAL_KEYS = /(?:token|access_token|api[_-]?key|sig|signature|auth|authorization)/i
+
+/**
+ * Value-shape heuristic for credential-looking query-string values. Matches
+ * either a base64url-ish substring ≥ 8 chars (alphanumerics, `.`, `_`, `~`,
+ * `+`, `/`, `-`, `=`) or a hex digest ≥ 16 chars.
+ */
+const URL_CREDENTIAL_VALUE = /^(?:[A-Za-z0-9._~+\/=-]{8,}|[A-Fa-f0-9]{16,})$/
+
+/**
+ * Returns true when the URL contains a query parameter whose name matches
+ * {@link URL_CREDENTIAL_KEYS} and whose value matches
+ * {@link URL_CREDENTIAL_VALUE}. When the URL cannot be parsed as absolute,
+ * a regex fallback over the raw text catches the same shape.
+ */
+function urlContainsCredential(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    for (const [key, value] of parsed.searchParams) {
+      if (!URL_CREDENTIAL_KEYS.test(key)) continue
+      if (URL_CREDENTIAL_VALUE.test(value)) return true
+    }
+    return false
+  } catch {
+    // Relative or malformed URL; fall through to the regex.
+  }
+  return /[?&](?:token|access_token|api[_-]?key|sig|signature|auth|authorization)=[^&\s"']{8,}/i.test(url)
+}
+
 /** One model-requested, tool-native widening of the standing workspace sandbox. */
 export interface SandboxEscalationRequest {
   readonly requestedMode: string
@@ -136,6 +166,13 @@ export function hardDenyReason(exec: Readonly<ToolExecution>, roots: PolicyRoots
   const args = record(exec.arguments)
   if ((/^(?:web_fetch|curl|wget)/i.test(exec.name) || EXTERNAL_WRITE_TOOL.test(exec.name)) && containsCredentialMaterial(exec.arguments)) {
     return 'external call contains credential or private-key material'
+  }
+  const argsForUrl = record(exec.arguments)
+  const argsUrl = typeof argsForUrl?.url === 'string' ? argsForUrl.url : undefined
+  if (argsUrl !== undefined
+      && (/^(?:web_fetch|curl|wget)/i.test(exec.name) || EXTERNAL_WRITE_TOOL.test(exec.name))
+      && urlContainsCredential(argsUrl)) {
+    return 'external URL contains credential-shaped query parameter'
   }
   if ((exec.name === 'bash' || exec.name === 'pwsh') && typeof args?.command === 'string') {
     return hardDenyShellReason(args.command, exec.name, roots)

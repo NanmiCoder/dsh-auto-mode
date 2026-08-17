@@ -231,4 +231,45 @@ describe('tool policy', () => {
     const patch = ['--- a/src/ok.ts', '+++ b/src/ok.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n')
     expect(hardDenyReason(execution('apply_patch', { patch, file_path: '/safe/dsh/settings.yaml' }), roots)).toMatch(/DSH_HOME/)
   })
+
+  it('hard-denies web_fetch URLs with credential-shaped long token values', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/cb?token=longstring12345' })
+    expect(hardDenyReason(outbound, roots)).toMatch(/credential-shaped query/)
+  })
+
+  it('hard-denies web_fetch URLs with a long hex sig parameter', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/x?sig=deadbeefcafebabe1234567890abcdef12345678' })
+    expect(hardDenyReason(outbound, roots)).toMatch(/credential-shaped query/)
+  })
+
+  it('does not deny web_fetch URLs with non-credential parameter names', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/?q=hello' })
+    expect(hardDenyReason(outbound, roots)).toBeUndefined()
+  })
+
+  it('does not deny web_fetch URLs whose credential-named parameter value is too short', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/?token=hello' })
+    expect(hardDenyReason(outbound, roots)).toBeUndefined()
+  })
+
+  it('does not deny web_fetch URLs with empty values', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/?token=' })
+    expect(hardDenyReason(outbound, roots)).toBeUndefined()
+  })
+
+  it('falls back to regex when the URL has no protocol (relative path)', () => {
+    const outbound = execution('web_fetch', { url: 'example.invalid/path?token=longstring12345' })
+    expect(hardDenyReason(outbound, roots)).toMatch(/credential-shaped query/)
+  })
+
+  it('hard-denies deploy tool URLs with credential-shaped parameters (EXTERNAL_WRITE_TOOL path)', () => {
+    // `repo_push` matches EXTERNAL_WRITE_TOOL.
+    const outbound = execution('repo_push', { url: 'https://example.invalid/api?api_key=abcdef1234567890' })
+    expect(hardDenyReason(outbound, roots)).toMatch(/credential-shaped query/)
+  })
+
+  it('does not deny URLs whose credential-named value is purely a 7-char opaque ID', () => {
+    const outbound = execution('web_fetch', { url: 'https://example.invalid/?token=short12' })
+    expect(hardDenyReason(outbound, roots)).toBeUndefined()
+  })
 })
