@@ -51,11 +51,11 @@ describe('HTTP classifier', () => {
       content: 'repository payload',
       apiKey: 'sk-example-secret',
     })).toEqual({
-      command: 'curl -H "Authorization: Bearer [redacted-secret]" https://example.invalid',
-      content: '[redacted-content:18-chars]',
+      command: 'curl -H "Authorization: [redacted-bearer]" https://example.invalid',
+      content: 'repository payload',
       apiKey: '[redacted-secret-field]',
     })
-    expect(sanitizeClassifierText('please use sk-example-secret-value for the test')).toBe('please use [redacted-secret] for the test')
+    expect(sanitizeClassifierText('please use sk-example-secret-value for the test')).toBe('please use [redacted-llm-key] for the test')
   })
 })
 
@@ -220,5 +220,65 @@ describe('redactClassifierText', () => {
   it('truncates the redacted value to maxLength when supplied', () => {
     const result = redactClassifierText('A'.repeat(2000), 100)
     expect(result.value.length).toBe(100)
+  })
+})
+
+describe('sanitizeClassifierArguments', () => {
+  it('redacts a top-level credential-shaped string value but leaves neighbors alone', () => {
+    const out = sanitizeClassifierArguments({
+      command: 'curl https://example.invalid',
+      note: 'use AKIAIOSFODNN7EXAMPLE in production',
+    }) as Record<string, string>
+    expect(out.command).toBe('curl https://example.invalid')
+    expect(out.note).toBe('use [redacted-aws-access-key] in production')
+  })
+
+  it('redacts string credentials nested inside arrays and objects', () => {
+    const out = sanitizeClassifierArguments({
+      env: [
+        'GITHUB_TOKEN=ghp_012345678901234567890123456789012345',
+        'OTHER=plain',
+      ],
+      nested: {
+        body: 'token = AKIAIOSFODNN7EXAMPLE',
+      },
+    })
+    expect(out).toEqual({
+      env: [
+        'GITHUB_[redacted-key-value]',
+        'OTHER=plain',
+      ],
+      nested: {
+        body: 'token = [redacted-aws-access-key]',
+      },
+    })
+  })
+
+  it('wholesale-redacts SECRET_KEYS-matched keys', () => {
+    const out = sanitizeClassifierArguments({ apiKey: 'sk-example-secret' }) as Record<string, string>
+    expect(out.apiKey).toBe('[redacted-secret-field]')
+  })
+
+  it('does NOT truncate CONTENT_KEYS-matched fields any more (content keys emit plain text after pattern scan)', () => {
+    const out = sanitizeClassifierArguments({ content: 'repository payload' }) as Record<string, string>
+    expect(out.content).toBe('repository payload')
+  })
+
+  it('preserves non-string scalars at depth 0', () => {
+    expect(sanitizeClassifierArguments({ count: 7, flag: true, missing: null }))
+      .toEqual({ count: 7, flag: true, missing: null })
+  })
+
+  it('caps array size at 25 entries', () => {
+    const arr = Array.from({ length: 30 }, (_, i) => `item-${i}`)
+    const out = sanitizeClassifierArguments({ list: arr }) as { list: unknown[] }
+    expect(out.list.length).toBe(25)
+  })
+
+  it('caps object key count at 50 entries', () => {
+    const obj: Record<string, string> = {}
+    for (let i = 0; i < 60; i++) obj[`k${i}`] = `v${i}`
+    const out = sanitizeClassifierArguments(obj) as Record<string, string>
+    expect(Object.keys(out).length).toBe(50)
   })
 })

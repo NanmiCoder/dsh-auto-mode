@@ -29,7 +29,6 @@ export interface HttpClassifierConfig {
   readonly fetchImpl?: typeof fetch
 }
 
-const CONTENT_KEYS = /^(?:content|body|payload|data|text|old_string|new_string|description|justification)$/i
 const SECRET_KEYS = /(?:api|auth|access|secret|private|credential|password|token|cookie|authorization).*?(?:key|value|token)?$/i
 
 interface CredentialPattern {
@@ -114,7 +113,7 @@ export function sanitizeClassifierText(value: string): string {
 /** Remove bulk content and likely secrets before crossing the classifier network boundary. */
 export function sanitizeClassifierArguments(value: unknown, depth = 0): unknown {
   if (depth > 3) return '[truncated-depth]'
-  if (typeof value === 'string') return sanitizeClassifierText(value)
+  if (typeof value === 'string') return redactClassifierText(value).value
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
   if (Array.isArray(value)) return value.slice(0, 25).map(item => sanitizeClassifierArguments(item, depth + 1))
   if (typeof value !== 'object') return `[${typeof value}]`
@@ -122,8 +121,6 @@ export function sanitizeClassifierArguments(value: unknown, depth = 0): unknown 
   for (const [key, entry] of Object.entries(value).slice(0, 50)) {
     if (SECRET_KEYS.test(key)) {
       output[key] = '[redacted-secret-field]'
-    } else if (CONTENT_KEYS.test(key) && typeof entry === 'string') {
-      output[key] = `[redacted-${key}:${entry.length}-chars]`
     } else {
       output[key] = sanitizeClassifierArguments(entry, depth + 1)
     }
