@@ -51,7 +51,9 @@ dsh --profile web --dump-config
 dsh web
 ```
 
-刷新 Web UI，在 Workspace Write 与 Full access 之间选择 **Auto**，并确认风险提示。如果实际运行的是其他 Profile，请把 `web` 替换为对应名称。
+刷新 Web UI，在“可写入工作区”与“完全权限”之间选择 **自动审批**，并确认风险提示。如果实际运行的是其他 Profile，请把 `web` 替换为对应名称。
+
+插件客户端使用 DSH 官方的多语言服务：中文界面显示 **自动审批**，英文界面保留 **Auto**。切换 DSH 语言后，权限菜单、当前模式按钮、“通用设置”中的默认权限、`/permission` 选项说明和风险确认弹窗都会立即更新，无需重启。
 
 ## 权限模式
 
@@ -59,7 +61,7 @@ dsh web
 | --- | --- | --- | --- |
 | Read Only | `read-only` | ask | 不启用 |
 | Workspace Write | `workspace-write` | ask | 不启用 |
-| **Auto** | `workspace-write` | ask | **启用** |
+| **自动审批（Auto）** | `workspace-write` | ask | **启用** |
 | Full access | `danger-full-access` | never | 不启用 |
 
 Auto 的普通操作保留在 Workspace Write 边界内，只有明确的一次性越权请求才可能被自动批准：
@@ -118,7 +120,7 @@ Full access 是用户明确选择的无沙箱、免审批模式，插件不能�
 
 ## 安全边界
 
-插件无法拦截加载前执行的包生命周期脚本、绕开 `ctx.tools` 的 Node 文件系统/进程调用、被攻破的 Harness Runtime 或在 Harness 外部启动的命令。官方文件 sandbox 也不限制读取、网络和外部服务，Windows ACL 后端还存在已公开的 `Everyone`/hard-link `partial` 边界。Auto 图标与风险确认弹窗只是针对已测试 DSH Web UI 的兼容增强，不是安全边界。
+插件无法拦截加载前执行的包生命周期脚本、绕开 `ctx.tools` 的 Node 文件系统/进程调用、被攻破的 Harness Runtime 或在 Harness 外部启动的命令。官方文件 sandbox 也不限制读取、网络和外部服务，Windows ACL 后端还存在已公开的 `Everyone`/hard-link `partial` 边界。本地化的“自动审批”文案、图标与风险确认弹窗只是针对已测试 DSH Web UI 的兼容增强，不是安全边界。
 
 ## 开发
 

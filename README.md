@@ -53,6 +53,8 @@ dsh web
 
 Refresh the Web UI, select **Auto** between Workspace Write and Full access, and acknowledge the risk notice. Replace `web` with another profile name when that is the profile you run.
 
+The Web client registers its copy with DSH's official locale service. English keeps the **Auto** product label; Chinese shows **自动审批**. Switching the DSH language updates the permission menus, active-mode control, General-settings selector, `/permission` picker description, and acknowledgement dialog without a restart.
+
 ## Permission modes
 
 | Mode | File sandbox | Approval | Auto policy |
@@ -118,7 +120,7 @@ See [DESIGN.md](./DESIGN.md) for the complete decision order, threat model, Wind
 
 ## Security boundaries
 
-The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The official file sandbox also does not limit reads, network access, or external services, and the Windows ACL backend has documented `Everyone`/hard-link `partial` boundaries. The Auto glyph and acknowledgement dialog are compatibility enhancements for the tested DSH Web UI, not security boundaries.
+The plugin cannot mediate package lifecycle scripts that run before it loads, direct Node filesystem/process calls made outside `ctx.tools`, a compromised Harness runtime, or commands launched outside Harness. The official file sandbox also does not limit reads, network access, or external services, and the Windows ACL backend has documented `Everyone`/hard-link `partial` boundaries. The localized Auto label, glyph, and acknowledgement dialog are compatibility enhancements for the tested DSH Web UI, not security boundaries.
 
 ## Development
 

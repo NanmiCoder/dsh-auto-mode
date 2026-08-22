@@ -2,6 +2,11 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { decorateAutoPermissionIcons, installAutoPermissionIcon } from '../src/client/icon-injection.ts'
+import { en, zh, type AutoModeLocaleKey } from '../src/client/locales.ts'
+
+const translate = (
+  dict: Record<AutoModeLocaleKey, string>,
+): (key: AutoModeLocaleKey) => string => key => dict[key]
 
 const permissionMenu = () => `
   <div role="menu">
@@ -89,18 +94,26 @@ describe('Auto permission icon decorator', () => {
 
   it('cancels without selecting and localizes the warning in Chinese', () => {
     document.documentElement.lang = 'zh-CN'
-    document.body.innerHTML = permissionMenu()
+    document.body.innerHTML = `
+      <div role="menu">
+        <button role="menuitem">仅可查看</button>
+        <button role="menuitem">可写入工作区</button>
+        <button role="menuitem">Auto</button>
+        <button role="menuitem">完全权限</button>
+      </div>
+    `
     const auto = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'))
       .find(item => item.textContent?.trim() === 'Auto')
     let selections = 0
     auto?.addEventListener('click', () => { selections += 1 })
-    const dispose = installAutoPermissionIcon(document)
+    const dispose = installAutoPermissionIcon(document, translate(zh))
 
+    expect(auto?.textContent).toBe('自动审批')
     auto?.click()
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
-    expect(dialog?.getAttribute('aria-label')).toBe('确认启用 Auto？')
-    expect(dialog?.textContent).toContain('workspace-write 操作系统级文件沙箱')
-    expect(dialog?.textContent).toContain('Windows 文件边界是 partial')
+    expect(dialog?.getAttribute('aria-label')).toBe('确认启用自动审批？')
+    expect(dialog?.textContent).toContain('可写入工作区')
+    expect(dialog?.textContent).toContain('Windows 上仅提供部分约束')
     const cancel = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])
       .find(button => button.textContent === '取消')
     cancel?.click()
@@ -108,6 +121,52 @@ describe('Auto permission icon decorator', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
 
     dispose()
+  })
+
+  it('follows the official locale across every Auto permission surface', async () => {
+    let dict: Record<AutoModeLocaleKey, string> = en
+    const t = (key: AutoModeLocaleKey): string => dict[key]
+    let notifyLocaleChange = (): void => {}
+    document.documentElement.lang = 'en'
+    document.body.innerHTML = `
+      ${permissionMenu()}
+      <button aria-label="Access mode, current: Auto"><span>Auto</span></button>
+      <div>
+        <div><div>Permission</div><div>Choose the default permission mode for new sessions</div></div>
+        <button aria-haspopup="menu"><span>Auto</span><svg></svg></button>
+      </div>
+      <div aria-label="/permission options">
+        <div role="listbox" aria-label="/permission matches">
+          <div role="option"><span>Auto</span><span>${en['preset.description']}</span></div>
+        </div>
+      </div>
+    `
+    const dispose = installAutoPermissionIcon(document, t, (listener) => {
+      notifyLocaleChange = listener
+      return () => { notifyLocaleChange = () => {} }
+    })
+    const menuAuto = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'))
+      .find(item => item.textContent?.trim() === 'Auto')
+    menuAuto?.click()
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Enable Auto?')
+
+    dict = zh
+    notifyLocaleChange()
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(menuAuto?.textContent?.trim()).toBe('自动审批')
+    expect(document.querySelector('button[aria-label^="Access mode"]')?.getAttribute('aria-label'))
+      .toBe('Access mode, current: 自动审批')
+    expect(document.querySelector('button[aria-haspopup="menu"]')?.textContent?.trim()).toBe('自动审批')
+    expect(document.querySelector('[role="option"]')?.textContent)
+      .toContain(zh['preset.description'])
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label'))
+      .toBe('确认启用自动审批？')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('启用自动审批')
+
+    dispose()
+    expect(menuAuto?.textContent?.trim()).toBe('Auto')
+    expect(document.querySelector('[role="option"]')?.textContent).toContain(en['preset.description'])
   })
 
   it('does not gate an unrelated menu that happens to contain Auto', () => {

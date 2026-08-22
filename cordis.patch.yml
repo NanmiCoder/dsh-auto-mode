@@ -11,7 +11,7 @@
         sandbox: workspace-write
         approval: ask
         name: Auto
-        description: Workspace-sandboxed execution with automatic semantic review and one-shot approval for wider access.
+        description: Workspace-sandboxed execution with automatic review and one-shot approval for wider access.
       danger-full-access:
         sandbox: danger-full-access
         approval: never

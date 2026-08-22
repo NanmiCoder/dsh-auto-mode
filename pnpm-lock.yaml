@@ -27,6 +27,9 @@ importers:
       '@deepseek-ai/dsh-bash-sandbox':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(91fa39984a3505443209dec2341a2955)
+      '@deepseek-ai/dsh-client-locale':
+        specifier: 0.1.0-rc.6
+        version: 0.1.0-rc.6(8099425af8ce7983893ed697bdbbc639)
       '@deepseek-ai/dsh-fs-sandbox':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(ecb3879f4d04c46d1738d96f48eb96de)

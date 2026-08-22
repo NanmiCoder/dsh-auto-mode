@@ -1,7 +1,24 @@
+import {
+  en, translateEnglish, zh, type AutoModeLocaleKey, type AutoModeTranslate,
+} from './locales.js'
+
 const PLUGIN_ID = '@nanmicoder/dsh-auto-mode'
 const ICON_ATTRIBUTE = 'data-dsh-auto-mode-icon'
 const DIALOG_ATTRIBUTE = 'data-dsh-auto-mode-risk-dialog'
-const REQUIRED_PERMISSION_LABELS = ['Read Only', 'Workspace Write', 'Auto', 'Full access'] as const
+const LOCALIZED_ATTRIBUTE = 'data-dsh-auto-mode-localized'
+const COPY_ATTRIBUTE = 'data-dsh-auto-mode-copy'
+const COPY_ARIA_ATTRIBUTE = 'data-dsh-auto-mode-copy-aria'
+const AUTO_SOURCE_LABEL = 'Auto'
+const AUTO_LABELS = new Set([AUTO_SOURCE_LABEL, en['preset.label'], zh['preset.label']])
+const AUTO_DESCRIPTIONS = new Set([en['preset.description'], zh['preset.description']])
+const PERMISSION_LABEL_SETS = [
+  ['Read Only', 'Workspace Write', 'Full access'],
+  ['仅可查看', '可写入工作区', '完全权限'],
+] as const
+const PERMISSION_ROW_TITLES = new Set(['Permission', '权限'])
+
+/** Register one locale-change listener and return its disposer. */
+export type AutoModeLocaleSubscribe = (listener: () => void) => () => void
 
 const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8.21.9l6.58 2.47v3.64c0 4.99-3.74 7.2-6.58 8.29C5.36 14.21 1.62 12 1.62 7.01V3.37L8.21.9Z" fill="none" stroke="black" stroke-width="1.32" stroke-linejoin="round"/><path d="M8.75 3.65 5.95 8.2h2.08l-.78 4.15 2.82-4.9H8.12l.63-3.8Z" fill="black"/></svg>'
 
@@ -187,36 +204,27 @@ function iconStyles(): string {
 `
 }
 
-interface RiskCopy {
-  readonly title: string
-  readonly description: string
-  readonly acknowledge: string
-  readonly cancel: string
-  readonly confirm: string
-  readonly close: string
+function setCopyKey(element: Element, key: AutoModeLocaleKey): void {
+  element.setAttribute(COPY_ATTRIBUTE, key)
 }
 
-const EN_RISK_COPY: RiskCopy = {
-  title: 'Enable Auto?',
-  description: 'Auto keeps DSH’s workspace-write operating-system file sandbox for ordinary work and can approve one exact wider request when a narrow, reversible step is clearly required by your task. Deleting or overwriting pre-existing data still requires exact direct-user authority and never extends to another target. The file sandbox does not restrict reads, network access, or external services; Windows enforcement is partial, and code outside the DSH tool pipeline remains outside this policy.',
-  acknowledge: 'I understand the risks and want to continue',
-  cancel: 'Cancel',
-  confirm: 'Enable Auto',
-  close: 'Close',
+function setAriaCopyKey(element: Element, key: AutoModeLocaleKey): void {
+  element.setAttribute(COPY_ARIA_ATTRIBUTE, key)
 }
 
-const ZH_RISK_COPY: RiskCopy = {
-  title: '确认启用 Auto？',
-  description: 'Auto 对普通操作保留 DSH 的 workspace-write 操作系统级文件沙箱；当任务明确需要一项范围很小、可恢复的越界操作时，可自动批准一次精确权限。删除或覆盖已有数据仍要求用户直接、精确授权，而且绝不扩展到第二个目标。文件沙箱不限制读取、网络和外部服务，Windows 文件边界是 partial；DSH 工具链外的代码也不受本策略覆盖。',
-  acknowledge: '我已了解风险，并愿意继续',
-  cancel: '取消',
-  confirm: '启用 Auto',
-  close: '关闭',
-}
-
-function riskCopy(document: Document): RiskCopy {
-  const language = document.documentElement.lang || document.defaultView?.navigator.language || ''
-  return /^zh(?:-|$)/i.test(language) ? ZH_RISK_COPY : EN_RISK_COPY
+function refreshRiskDialog(document: Document, t: AutoModeTranslate): void {
+  const dialog = document.querySelector(`[${DIALOG_ATTRIBUTE}]`)
+  if (dialog === null) return
+  for (const element of dialog.querySelectorAll(`[${COPY_ATTRIBUTE}]`)) {
+    const key = element.getAttribute(COPY_ATTRIBUTE) as AutoModeLocaleKey
+    const copy = t(key)
+    if (element.textContent !== copy) element.textContent = copy
+  }
+  for (const element of dialog.querySelectorAll(`[${COPY_ARIA_ATTRIBUTE}]`)) {
+    const key = element.getAttribute(COPY_ARIA_ATTRIBUTE) as AutoModeLocaleKey
+    const copy = t(key)
+    if (element.getAttribute('aria-label') !== copy) element.setAttribute('aria-label', copy)
+  }
 }
 
 function makeElement<K extends keyof HTMLElementTagNameMap>(
@@ -232,8 +240,12 @@ function makeElement<K extends keyof HTMLElementTagNameMap>(
 }
 
 /** Build the plugin-owned equivalent of DSH's shared RiskConfirmation dialog. */
-function createRiskDialog(document: Document, onCancel: () => void, onConfirm: () => void): HTMLElement {
-  const copy = riskCopy(document)
+function createRiskDialog(
+  document: Document,
+  t: AutoModeTranslate,
+  onCancel: () => void,
+  onConfirm: () => void,
+): HTMLElement {
   const layer = document.createElement('div')
   layer.setAttribute(DIALOG_ATTRIBUTE, '')
   layer.setAttribute('role', 'presentation')
@@ -244,35 +256,44 @@ function createRiskDialog(document: Document, onCancel: () => void, onConfirm: (
   const card = makeElement(document, 'div', 'dsh-auto-risk-card')
   card.setAttribute('role', 'dialog')
   card.setAttribute('aria-modal', 'true')
-  card.setAttribute('aria-label', copy.title)
+  card.setAttribute('aria-label', t('dialog.title'))
+  setAriaCopyKey(card, 'dialog.title')
 
   const content = makeElement(document, 'div', 'dsh-auto-risk-content')
   const header = makeElement(document, 'div', 'dsh-auto-risk-header')
-  const title = makeElement(document, 'h2', 'dsh-auto-risk-title', copy.title)
+  const title = makeElement(document, 'h2', 'dsh-auto-risk-title', t('dialog.title'))
+  setCopyKey(title, 'dialog.title')
   const close = makeElement(document, 'button', 'dsh-auto-risk-close', '×')
   close.type = 'button'
-  close.setAttribute('aria-label', copy.close)
+  close.setAttribute('aria-label', t('dialog.close'))
+  setAriaCopyKey(close, 'dialog.close')
   header.append(title, close)
 
   const body = makeElement(document, 'div', 'dsh-auto-risk-body')
   const warning = makeElement(document, 'div', 'dsh-auto-risk-warning')
   const warningIcon = makeElement(document, 'span', 'dsh-auto-risk-warning-icon', '!')
   warningIcon.setAttribute('aria-hidden', 'true')
-  warning.append(warningIcon, makeElement(document, 'p', '', copy.description))
+  const description = makeElement(document, 'p', '', t('dialog.description'))
+  setCopyKey(description, 'dialog.description')
+  warning.append(warningIcon, description)
 
   const acknowledgement = makeElement(document, 'label', 'dsh-auto-risk-acknowledgement')
   const checkbox = document.createElement('input')
   checkbox.type = 'checkbox'
-  acknowledgement.append(checkbox, document.createTextNode(copy.acknowledge))
+  const acknowledgementCopy = makeElement(document, 'span', '', t('dialog.acknowledge'))
+  setCopyKey(acknowledgementCopy, 'dialog.acknowledge')
+  acknowledgement.append(checkbox, acknowledgementCopy)
   body.append(warning, acknowledgement)
   content.append(header, body)
 
   const footer = makeElement(document, 'div', 'dsh-auto-risk-footer')
-  const cancel = makeElement(document, 'button', 'dsh-auto-risk-action', copy.cancel)
+  const cancel = makeElement(document, 'button', 'dsh-auto-risk-action', t('dialog.cancel'))
   cancel.type = 'button'
-  const confirm = makeElement(document, 'button', 'dsh-auto-risk-action dsh-auto-risk-confirm', copy.confirm)
+  setCopyKey(cancel, 'dialog.cancel')
+  const confirm = makeElement(document, 'button', 'dsh-auto-risk-action dsh-auto-risk-confirm', t('dialog.confirm'))
   confirm.type = 'button'
   confirm.disabled = true
+  setCopyKey(confirm, 'dialog.confirm')
   footer.append(cancel, confirm)
   card.append(content, footer)
   layer.append(mask, card)
@@ -297,15 +318,49 @@ function normalizedText(element: Element): string {
   return (element.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function hasAutoLabel(element: Element): boolean {
+  return AUTO_LABELS.has(normalizedText(element))
+}
+
+function replaceKnownText(element: Element, known: ReadonlySet<string>, replacement: string): boolean {
+  let matched = false
+  for (const child of element.childNodes) {
+    if (child.nodeType === 3) {
+      const text = child.textContent ?? ''
+      const match = /^(\s*)(.*?)(\s*)$/s.exec(text)
+      if (match !== null && known.has(match[2] ?? '')) {
+        const localized = `${match[1] ?? ''}${replacement}${match[3] ?? ''}`
+        if (text !== localized) child.textContent = localized
+        matched = true
+      }
+      continue
+    }
+    if (child.nodeType === 1) {
+      matched = replaceKnownText(child as Element, known, replacement) || matched
+    }
+  }
+  return matched
+}
+
+function replaceAutoSuffix(value: string, replacement: string): string {
+  for (const label of AUTO_LABELS) {
+    if (!value.endsWith(label)) continue
+    const prefix = value.slice(0, -label.length)
+    if (prefix === '' || /[\s,:，：]$/.test(prefix)) return `${prefix}${replacement}`
+  }
+  return value
+}
+
 function isPermissionMenu(menu: Element): boolean {
   const labels = new Set(
     Array.from(menu.querySelectorAll('button[role="menuitem"]'), normalizedText),
   )
-  return REQUIRED_PERMISSION_LABELS.every(label => labels.has(label))
+  return [...AUTO_LABELS].some(label => labels.has(label))
+    && PERMISSION_LABEL_SETS.some(required => required.every(label => labels.has(label)))
 }
 
 function isAutoMenuItem(element: Element): boolean {
-  if (element.matches('button[role="menuitem"]') && normalizedText(element) === 'Auto') {
+  if (element.matches('button[role="menuitem"]') && hasAutoLabel(element)) {
     const menu = element.closest('[role="menu"]')
     return menu !== null && isPermissionMenu(menu)
   }
@@ -317,7 +372,7 @@ function isAutoPermissionOption(element: Element): boolean {
   const listbox = element.closest('[role="listbox"][aria-label]')
   const listboxLabel = listbox?.getAttribute('aria-label') ?? ''
   if (!/^\/permission\s+(?:matches|匹配项)$/i.test(listboxLabel.trim())) return false
-  return normalizedText(element.firstElementChild ?? element) === 'Auto'
+  return hasAutoLabel(element.firstElementChild ?? element)
 }
 
 function activeAutoPermissionOption(target: Element): Element | null {
@@ -335,32 +390,108 @@ function isAutoPermissionChoice(element: Element): boolean {
 function isAutoTrigger(element: Element): boolean {
   if (!element.matches('button[aria-label]')) return false
   const label = element.getAttribute('aria-label') ?? ''
-  return /(?:访问模式|Access mode)[\s\S]*Auto\s*$/i.test(label)
+  return /(?:访问模式|Access mode)/i.test(label)
+    && [...AUTO_LABELS].some(autoLabel => label.trimEnd().endsWith(autoLabel))
 }
 
-/** Mark the official Auto permission row and active trigger for CSS decoration. */
-export function decorateAutoPermissionIcons(document: Document): void {
+function hasPermissionTitle(element: Element): boolean {
+  return Array.from(element.querySelectorAll('div'))
+    .some(candidate => PERMISSION_ROW_TITLES.has(normalizedText(candidate)))
+}
+
+function isAutoSettingsTrigger(element: Element): boolean {
+  if (!element.matches('button[aria-haspopup="menu"]') || !hasAutoLabel(element)) return false
+  let ancestor = element.parentElement
+  for (let depth = 0; ancestor !== null && depth < 4; depth += 1, ancestor = ancestor.parentElement) {
+    if (hasPermissionTitle(ancestor)) return true
+    if (ancestor.matches('[role="dialog"]')) return false
+  }
+  return false
+}
+
+function localizeAutoLabel(element: Element, kind: string, t: AutoModeTranslate): void {
+  if (replaceKnownText(element, AUTO_LABELS, t('preset.label'))) {
+    element.setAttribute(LOCALIZED_ATTRIBUTE, kind)
+  }
+}
+
+function localizeAutoTrigger(element: Element, t: AutoModeTranslate): void {
+  localizeAutoLabel(element, 'trigger', t)
+  const label = element.getAttribute('aria-label')
+  if (label !== null) {
+    const localized = replaceAutoSuffix(label, t('preset.label'))
+    if (localized !== label) element.setAttribute('aria-label', localized)
+  }
+}
+
+function localizeAutoOption(element: Element, t: AutoModeTranslate): void {
+  localizeAutoLabel(element.firstElementChild ?? element, 'option', t)
+  replaceKnownText(element, AUTO_DESCRIPTIONS, t('preset.description'))
+  element.setAttribute(LOCALIZED_ATTRIBUTE, 'option')
+}
+
+function restoreLocalizedCopy(document: Document): void {
+  for (const element of document.querySelectorAll(`[${LOCALIZED_ATTRIBUTE}]`)) {
+    const kind = element.getAttribute(LOCALIZED_ATTRIBUTE)
+    replaceKnownText(element, AUTO_LABELS, AUTO_SOURCE_LABEL)
+    if (kind === 'option') replaceKnownText(element, AUTO_DESCRIPTIONS, en['preset.description'])
+    if (kind === 'trigger') {
+      const label = element.getAttribute('aria-label')
+      if (label !== null) element.setAttribute('aria-label', replaceAutoSuffix(label, AUTO_SOURCE_LABEL))
+    }
+    element.removeAttribute(LOCALIZED_ATTRIBUTE)
+  }
+}
+
+/** Localize and mark the official Auto permission surfaces for CSS decoration. */
+export function decorateAutoPermissionIcons(
+  document: Document,
+  t: AutoModeTranslate = translateEnglish,
+): void {
   for (const marked of document.querySelectorAll(`[${ICON_ATTRIBUTE}]`)) {
     const kind = marked.getAttribute(ICON_ATTRIBUTE)
-    if ((kind === 'menu' && !isAutoMenuItem(marked)) || (kind === 'trigger' && !isAutoTrigger(marked))) {
+    if ((kind === 'menu' && !isAutoMenuItem(marked))
+      || (kind === 'trigger' && !isAutoTrigger(marked))
+      || (kind === 'settings' && !isAutoSettingsTrigger(marked))) {
       marked.removeAttribute(ICON_ATTRIBUTE)
+      marked.removeAttribute(LOCALIZED_ATTRIBUTE)
     }
   }
 
   for (const menu of document.querySelectorAll('[role="menu"]')) {
     if (!isPermissionMenu(menu)) continue
     for (const item of menu.querySelectorAll('button[role="menuitem"]')) {
-      if (normalizedText(item) === 'Auto') item.setAttribute(ICON_ATTRIBUTE, 'menu')
+      if (!hasAutoLabel(item)) continue
+      localizeAutoLabel(item, 'menu', t)
+      item.setAttribute(ICON_ATTRIBUTE, 'menu')
     }
   }
 
   for (const button of document.querySelectorAll('button[aria-label]')) {
-    if (isAutoTrigger(button)) button.setAttribute(ICON_ATTRIBUTE, 'trigger')
+    if (!isAutoTrigger(button)) continue
+    localizeAutoTrigger(button, t)
+    button.setAttribute(ICON_ATTRIBUTE, 'trigger')
   }
+
+  for (const button of document.querySelectorAll('button[aria-haspopup="menu"]')) {
+    if (!isAutoSettingsTrigger(button)) continue
+    localizeAutoLabel(button, 'settings', t)
+    button.setAttribute(ICON_ATTRIBUTE, 'settings')
+  }
+
+  for (const option of document.querySelectorAll('[role="option"]')) {
+    if (isAutoPermissionOption(option)) localizeAutoOption(option, t)
+  }
+
+  refreshRiskDialog(document, t)
 }
 
-/** Install the Auto icon and explicit risk gate, then return their disposer. */
-export function installAutoPermissionIcon(document: Document): () => void {
+/** Install the localized Auto UI and explicit risk gate, then return their disposer. */
+export function installAutoPermissionIcon(
+  document: Document,
+  t: AutoModeTranslate = translateEnglish,
+  subscribe?: AutoModeLocaleSubscribe,
+): () => void {
   for (const existing of document.querySelectorAll('style[data-plugin]')) {
     if (existing.getAttribute('data-plugin') === PLUGIN_ID) existing.remove()
   }
@@ -378,19 +509,20 @@ export function installAutoPermissionIcon(document: Document): () => void {
     queued = true
     queueMicrotask(() => {
       queued = false
-      if (active) decorateAutoPermissionIcons(document)
+      if (active) decorateAutoPermissionIcons(document, t)
     })
   }
 
-  decorateAutoPermissionIcons(document)
+  decorateAutoPermissionIcons(document, t)
   const observer = new MutationObserver(scan)
   observer.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['aria-label'],
+    attributeFilter: ['aria-label', 'lang'],
     characterData: true,
     childList: true,
     subtree: true,
   })
+  const unsubscribe = subscribe?.(scan)
 
   const bypassed = new WeakSet<Element>()
   let dialog: HTMLElement | null = null
@@ -410,7 +542,7 @@ export function installAutoPermissionIcon(document: Document): () => void {
   }
   const openDialog = (item: Element): void => {
     if (dialog !== null) return
-    dialog = createRiskDialog(document, dismissDialog, () => {
+    dialog = createRiskDialog(document, t, dismissDialog, () => {
       closeDialog()
       if (!item.isConnected) return
       bypassed.add(item)
@@ -462,11 +594,13 @@ export function installAutoPermissionIcon(document: Document): () => void {
   return () => {
     active = false
     observer.disconnect()
+    unsubscribe?.()
     document.removeEventListener('click', onClick, true)
     document.removeEventListener('pointerdown', onPointerDown, true)
     document.removeEventListener('keydown', onKeyDown, true)
     closeDialog()
     style.remove()
+    restoreLocalizedCopy(document)
     for (const marked of document.querySelectorAll(`[${ICON_ATTRIBUTE}]`)) {
       marked.removeAttribute(ICON_ATTRIBUTE)
     }

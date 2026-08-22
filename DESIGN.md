@@ -27,7 +27,7 @@ Auto and Workspace Write share a standing file boundary but not behavior. Auto a
 
 Normal Agent calls derive `workspaceRoot` from the Session's immutable canonical cwd. A command-level `workdir` can change process cwd but cannot change the sandbox write root. The official sandbox limits filesystem writes only: reads, sockets, process visibility, external services, and destructive changes inside the workspace require separate policy where their semantics matter. Linux bwrap/Landlock and macOS Seatbelt provide OS enforcement; the Windows restricted-token/ACL runner reports `partial` enforcement because of its documented `Everyone`, hard-link, and non-ACL-volume boundaries.
 
-The Web decorator supplies the missing Auto glyph and a bilingual acknowledgement. It explains the standing workspace sandbox, exact wider approval, read/network limitations, Windows partial enforcement, and out-of-pipeline plugin boundary. This UI is explanatory, not an authorization boundary.
+The Web decorator registers English and Chinese copy with the official locale service. English keeps the Auto label and Chinese renders it as “自动审批” across both permission selectors, the active-mode control, and the `/permission` picker; the acknowledgement follows the same live locale. The decorator also supplies the missing glyph. It explains the standing workspace sandbox, exact wider approval, read/network limitations, Windows partial enforcement, and out-of-pipeline plugin boundary. This UI is explanatory, not an authorization boundary.
 
 ## Decision order
 
