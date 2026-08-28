@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from '../src/artifacts.js'
 import { resolveRoots } from '../src/paths.js'
-import { assessTool, hardDenyReason } from '../src/policy.js'
+import { assessTool, hardDenyReason, sandboxEscalationRequest, sandboxRequestState } from '../src/policy.js'
 
 const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/dsh', tempRoots: ['/tmp'] })
 const execution = (name: string, args: unknown) => ({ name, arguments: args, token: Symbol(name) }) as ToolExecution
@@ -106,5 +106,37 @@ describe('tool policy', () => {
       .toMatchObject({ decision: 'allow', classifierEligible: false })
     expect(assessTool(execution('str_replace_editor', { command: 'create', path: '/work/repo/generated.ts' }), roots, artifacts))
       .toMatchObject({ plannedCreates: ['/work/repo/generated.ts'] })
+  })
+
+  it('classifies raw sandbox fields into the rc.2 request states without normalization', () => {
+    expect(sandboxRequestState({ command: 'pnpm test' })).toEqual({ kind: 'absent' })
+    expect(sandboxRequestState({ sandbox_permissions: null })).toEqual({ kind: 'invalid', requestedMode: null })
+    expect(sandboxRequestState({ sandbox_permissions: 1 })).toEqual({ kind: 'invalid', requestedMode: 1 })
+    expect(sandboxRequestState({ sandbox_permissions: { mode: 'workspace-write' } })).toEqual({
+      kind: 'invalid',
+      requestedMode: { mode: 'workspace-write' },
+    })
+    expect(sandboxRequestState({ sandbox_permissions: undefined })).toEqual({ kind: 'invalid', requestedMode: undefined })
+    expect(sandboxRequestState({ sandbox_permissions: 'workspace-write' })).toEqual({ kind: 'redundant-standing' })
+    expect(sandboxRequestState({ sandbox_permissions: 'workspace-write', justification: 'anything' })).toEqual({ kind: 'redundant-standing' })
+    expect(sandboxRequestState({ sandbox_permissions: 'danger-full-access', justification: 'write one exact target' })).toEqual({
+      kind: 'widening',
+      request: { requestedMode: 'danger-full-access', justification: 'write one exact target' },
+    })
+    expect(sandboxRequestState({ sandbox_permissions: 'danger-full-access' })).toEqual({
+      kind: 'widening',
+      request: { requestedMode: 'danger-full-access', justification: '' },
+    })
+    for (const requestedMode of [' workspace-write ', 'WORKSPACE-WRITE', '', 'read-only', 'other']) {
+      expect(sandboxRequestState({ sandbox_permissions: requestedMode })).toEqual({ kind: 'invalid', requestedMode })
+    }
+  })
+
+  it('keeps the legacy sandbox escalation view available for consumers', () => {
+    expect(sandboxEscalationRequest({ sandbox_permissions: 'workspace-write', justification: 'why' })).toEqual({
+      requestedMode: 'workspace-write',
+      justification: 'why',
+    })
+    expect(sandboxEscalationRequest({ sandbox_permissions: null })).toBeUndefined()
   })
 })

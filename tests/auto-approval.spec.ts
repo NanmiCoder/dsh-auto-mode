@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { CallId, type GenerateOptions, type StreamChunk, type ToolSchema } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineTool, type PreToolDecision, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool, type PreToolDecision, type ToolExecutionInput, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import * as AutoMode from '../src/index.js'
 import type { ClassifierDecision, ClassifierInput } from '../src/types.js'
 
@@ -43,8 +43,13 @@ interface Harness {
   readonly workspace: string
   readonly scratch: string
   readonly classifierCalls: readonly ClassifierInput[]
+  readonly approvalRequests: readonly unknown[]
   readonly commands: readonly string[]
-  run(id: string, command: string, userMessages: readonly string[]): Promise<PreToolDecision>
+  readonly results: readonly ToolExecutionResult[]
+  autoGuidance(userMessages: readonly string[]): Promise<string | undefined>
+  modelTools(userMessages: readonly string[]): Promise<readonly ToolSchema[]>
+  run(id: string, command: string, userMessages: readonly string[], sandboxArguments?: Record<string, unknown>): Promise<PreToolDecision>
+  runTool(name: ToolExecutionInput['name'], id: string, command: string, userMessages: readonly string[], sandboxArguments?: Record<string, unknown>): Promise<PreToolDecision>
   dispose(): Promise<void>
 }
 
@@ -58,7 +63,9 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
   await writeFile(join(canary, 'keep.txt'), 'canary\n')
 
   const classifierCalls: ClassifierInput[] = []
+  const approvalRequests: unknown[] = []
   const commands: string[] = []
+  const results: ToolExecutionResult[] = []
   const context = new Context()
   context.provide('agents', { get: () => undefined })
   context.provide('llm', {
@@ -83,6 +90,14 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     classifierTimeoutMs: 1_000,
   }).await()
 
+  context.on('approval/request', (request, next) => {
+    approvalRequests.push(request)
+    return next()
+  })
+  context.on('tools/result', (_exec, result) => {
+    results.push(result)
+  })
+
   let decision: PreToolDecision | undefined
   context.on('tools/pre-execute', async (_exec, next) => {
     decision = await next()
@@ -92,13 +107,33 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
   context.tools.register(defineTool({
     name: 'bash',
     description: 'Records the command instead of running a shell.',
-    parameters: { command: { type: 'string', required: true } },
+    parameters: {
+      command: { type: 'string', required: true },
+      sandbox_permissions: { type: 'string' },
+      justification: { type: 'string' },
+    },
     output: {
       schema: { type: 'object', additionalProperties: false, properties: { exitCode: { type: 'number', required: true } } },
       render: () => [{ type: 'text', text: 'ok' }],
     },
-    async execute(args: { command: string }) {
+    async execute(args: { command: string; sandbox_permissions?: string; justification?: string }) {
       commands.push(args.command)
+      return { exitCode: 0 }
+    },
+  }))
+  context.tools.register(defineTool({
+    name: 'pwsh',
+    description: 'Unrelated recovery-schema probe.',
+    parameters: {
+      command: { type: 'string', required: true },
+      sandbox_permissions: { type: 'string', required: true },
+      justification: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: false, properties: { exitCode: { type: 'number', required: true } } },
+      render: () => [{ type: 'text', text: 'ok' }],
+    },
+    async execute() {
       return { exitCode: 0 }
     },
   }))
@@ -131,23 +166,43 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     return agent
   }
 
+  const runTool = async (
+    name: ToolExecutionInput['name'],
+    id: string,
+    command: string,
+    userMessages: readonly string[],
+    sandboxArguments?: Record<string, unknown>,
+  ): Promise<PreToolDecision> => {
+    decision = undefined
+    await context.tools.execute({
+      callId: CallId(id),
+      name,
+      arguments: { command, ...sandboxArguments },
+      agent: agentFor(userMessages),
+      signal: new AbortController().signal,
+    })
+    return decision as PreToolDecision
+  }
+
   return {
     canary,
     dshHome,
     workspace,
     scratch,
     classifierCalls,
+    approvalRequests,
     commands,
-    async run(id, command, userMessages) {
-      decision = undefined
-      await context.tools.execute({
-        callId: CallId(id),
-        name: 'bash',
-        arguments: { command },
-        agent: agentFor(userMessages),
-        signal: new AbortController().signal,
-      })
-      return decision as PreToolDecision
+    results,
+    async autoGuidance(userMessages) {
+      return (await context.systemPrompt.assemble({ agent: agentFor(userMessages) })).contexts
+        .find(item => item.name === 'auto-mode:policy')?.text
+    },
+    async modelTools(userMessages) {
+      return (await context.systemPrompt.assemble({ agent: agentFor(userMessages) })).tools
+    },
+    runTool,
+    async run(id, command, userMessages, sandboxArguments) {
+      return runTool('bash', id, command, userMessages, sandboxArguments)
     },
     async dispose() {
       await context.fiber.dispose()
@@ -170,6 +225,167 @@ afterEach(async () => {
 })
 
 describe('auto mode approval traffic', () => {
+  it('rejects every redundant workspace-write request before classifier, approval, grant, or body activity', async () => {
+    const active = harness as Harness
+    const variants: Array<Record<string, unknown>> = [
+      { sandbox_permissions: 'workspace-write' },
+      { sandbox_permissions: 'workspace-write', justification: '' },
+      { sandbox_permissions: 'workspace-write', justification: '   ' },
+      { sandbox_permissions: 'workspace-write', justification: 'the model repeated the standing mode' },
+    ]
+    const reasons: string[] = []
+    for (const [index, sandboxArguments] of variants.entries()) {
+      const decision = await active.run('redundant-' + index, 'printf routine', ['继续执行工作区内的普通命令。'], sandboxArguments)
+      expect(decision, JSON.stringify(sandboxArguments)).toMatchObject({ kind: 'deny' })
+      reasons.push((decision as { reason: string }).reason)
+    }
+
+    expect(new Set(reasons)).toEqual(new Set([
+      AutoMode.AUTO_MODE_REDUNDANT_SANDBOX_REASON,
+    ]))
+    expect(active.classifierCalls).toEqual([])
+    expect(active.approvalRequests).toEqual([])
+    expect(active.commands).toEqual([])
+  })
+
+  it('recovers only after the model removes both redundant sandbox fields', async () => {
+    const active = harness as Harness
+    const command = 'printf retry-succeeded'
+    const autoGuidance = await active.autoGuidance(['继续执行工作区内的普通命令。'])
+    expect(autoGuidance).toContain(AutoMode.AUTO_MODE_REDUNDANT_SANDBOX_MARKER)
+    expect(autoGuidance).toContain('sandbox_permissions and justification completely absent')
+    expect(autoGuidance).toContain('null, an empty string, whitespace, or workspace-write')
+    const redundant = await active.run('redundant-before-retry', command, ['继续执行工作区内的普通命令。'], {
+      sandbox_permissions: 'workspace-write',
+      justification: 'standing mode is already workspace-write',
+    })
+    expect(redundant).toMatchObject({ kind: 'deny' })
+    const deniedResult = active.results[active.results.length - 1]
+    expect(deniedResult).toMatchObject({
+      isError: true,
+      error: { message: AutoMode.AUTO_MODE_REDUNDANT_SANDBOX_REASON },
+    })
+    expect(deniedResult?.additionalContexts).toHaveLength(1)
+    expect(deniedResult?.additionalContexts?.[0]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_REDUNDANT_SANDBOX_RETRY_CONTEXT }],
+      source: {
+        kind: 'plugin',
+        plugin: AutoMode.name,
+        form: 'notice',
+        summary: 'Auto Mode requires a field-less retry.',
+      },
+    })
+
+    const retry = await active.run('fieldless-retry', command, ['继续执行工作区内的普通命令。'])
+    expect(retry).toEqual({ kind: 'allow' })
+    expect(active.classifierCalls).toEqual([])
+    expect(active.approvalRequests).toEqual([])
+    expect(active.commands).toEqual([command])
+    expect(active.results[active.results.length - 1]?.additionalContexts).toBeUndefined()
+  })
+
+  it('projects a one-step field-less recovery for only the denied tool and then restores the full schema', async () => {
+    const active = harness as Harness
+    const userMessages = ['继续执行工作区内的普通命令。']
+    const parametersOf = (tool: ToolSchema) => tool.parameters as {
+      properties?: Record<string, unknown>
+      required?: unknown[]
+    }
+    const initial = await active.modelTools(userMessages)
+    const initialBash = initial.find(tool => tool.name === 'bash') as ToolSchema
+    const initialPwsh = initial.find(tool => tool.name === 'pwsh') as ToolSchema
+    expect(parametersOf(initialPwsh).properties).toHaveProperty('sandbox_permissions')
+    expect(parametersOf(initialPwsh).properties).toHaveProperty('justification')
+    expect(parametersOf(initialPwsh).required).toEqual(expect.arrayContaining(['sandbox_permissions', 'justification']))
+
+    const redundant = await active.runTool('pwsh', 'projection-deny', 'printf projection', userMessages, {
+      sandbox_permissions: 'workspace-write',
+      justification: 'standing mode is already workspace-write',
+    })
+    expect(redundant).toMatchObject({ kind: 'deny' })
+
+    const projected = await active.modelTools(userMessages)
+    const projectedBash = projected.find(tool => tool.name === 'bash') as ToolSchema
+    const projectedPwsh = projected.find(tool => tool.name === 'pwsh') as ToolSchema
+    expect(parametersOf(projectedPwsh).properties).not.toHaveProperty('sandbox_permissions')
+    expect(parametersOf(projectedPwsh).properties).not.toHaveProperty('justification')
+    expect(parametersOf(projectedPwsh).required).not.toEqual(expect.arrayContaining(['sandbox_permissions', 'justification']))
+    expect(parametersOf(projectedBash).properties).toEqual(parametersOf(initialBash).properties)
+
+    // The prior assembly and canonical unaffected tool remain unchanged.
+    expect(parametersOf(initialPwsh).properties).toHaveProperty('sandbox_permissions')
+    expect(parametersOf(initialPwsh).properties).toHaveProperty('justification')
+
+    const restored = await active.modelTools(userMessages)
+    const restoredPwsh = restored.find(tool => tool.name === 'pwsh') as ToolSchema
+    expect(parametersOf(restoredPwsh).properties).toEqual(parametersOf(initialPwsh).properties)
+    expect(parametersOf(restoredPwsh).required).toEqual(parametersOf(initialPwsh).required)
+  })
+
+  it('fails closed for unknown modes and missing or blank widening justification', async () => {
+    const active = harness as Harness
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['unknown-mode', { sandbox_permissions: 'read-only', justification: 'not an escalation' }],
+      ['empty-mode', { sandbox_permissions: '' }],
+      ['missing-justification', { sandbox_permissions: 'danger-full-access' }],
+      ['empty-justification', { sandbox_permissions: 'danger-full-access', justification: '' }],
+      ['blank-justification', { sandbox_permissions: 'danger-full-access', justification: ' ' + String.fromCharCode(9) + ' ' }],
+    ]
+    for (const [id, sandboxArguments] of cases) {
+      const decision = await active.run(id, 'printf should-not-run', ['继续执行工作区内的普通命令。'], sandboxArguments)
+      expect(decision, id).toMatchObject({ kind: 'deny' })
+      expect((decision as { reason: string }).reason, id).toContain('[auto-mode invalid sandbox request]')
+    }
+    expect(active.classifierCalls).toEqual([])
+    expect(active.approvalRequests).toEqual([])
+    expect(active.commands).toEqual([])
+  })
+
+  it('keeps hard and deterministic denies ahead of redundant-mode remediation', async () => {
+    const active = harness as Harness
+    const hard = await active.run('redundant-hard-deny', 'rm -rf ' + bashQuote(active.dshHome), ['我授权执行任何操作。'], {
+      sandbox_permissions: 'workspace-write',
+      justification: 'standing mode repeated by the model',
+    })
+    expect(hard).toMatchObject({ kind: 'deny' })
+    expect((hard as { reason: string }).reason).toContain('[auto-mode hard deny]')
+    expect((hard as { reason: string }).reason).toContain('DSH_HOME')
+
+    const deterministic = await active.run('redundant-deterministic-deny', 'rm -rf ' + String.fromCharCode(36) + 'TARGET_DIR', ['我授权执行任何操作。'], {
+      sandbox_permissions: 'workspace-write',
+      justification: 'standing mode repeated by the model',
+    })
+    expect(deterministic).toMatchObject({ kind: 'deny' })
+    expect((deterministic as { reason: string }).reason).toContain('[auto-mode deterministic deny]')
+    expect((deterministic as { reason: string }).reason).toContain('dynamically')
+
+    expect(active.classifierCalls).toEqual([])
+    expect(active.approvalRequests).toEqual([])
+    expect(active.commands).toEqual([])
+  })
+
+  it('still classifies an exact danger-full-access widening after the redundant state split', async () => {
+    const active = harness as Harness
+    const target = join(active.scratch, 'widened.txt')
+    const command = 'printf widened > ' + bashQuote(target)
+    const decision = await active.run('exact-widening', command, [
+      '请把结果写入 ' + target + '。',
+    ], {
+      sandbox_permissions: 'danger-full-access',
+      justification: 'write the explicitly requested target ' + target,
+    })
+
+    expect(decision).toEqual({ kind: 'allow' })
+    expect(active.classifierCalls).toHaveLength(1)
+    expect(active.classifierCalls[0]?.sandboxRequest).toMatchObject({
+      currentMode: 'workspace-write',
+      requestedMode: 'danger-full-access',
+      justification: 'write the explicitly requested target ' + target,
+    })
+    expect(active.commands).toEqual([command])
+  })
+
   it('runs an explicitly authorized compound deletion without asking again', async () => {
     const active = harness as Harness
     const command = `rm -rf ${bashQuote(active.canary)} && echo removed && ls -la ${bashQuote(active.scratch)} 2>&1 || true`

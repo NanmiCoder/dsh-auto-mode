@@ -17,8 +17,15 @@ import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import * as AutoMode from '../src/index.js'
 import type { ClassifierInput } from '../src/types.js'
 
+const nativePwshPath = process.platform === 'win32'
+  ? [
+      join(process.env.ProgramFiles ?? 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe'),
+      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      'pwsh',
+    ].find(candidate => candidate === 'pwsh' || existsSync(candidate)) ?? 'pwsh'
+  : 'pwsh'
 const nativeWindowsPwsh = process.platform === 'win32'
-  && spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$true'], {
+  && spawnSync(nativePwshPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$true'], {
     timeout: 5_000,
     stdio: 'ignore',
   }).status === 0
@@ -32,7 +39,7 @@ interface WindowsHarness {
   readonly outside: string
   readonly classifierCalls: ClassifierInput[]
   readonly events: Array<{ type: string; data?: Record<string, unknown> }>
-  run(callId: string, command: string, options?: { escalate?: boolean }): Promise<ToolExecutionResult>
+  run(callId: string, command: string, options?: { escalate?: boolean; sandboxArguments?: Record<string, unknown> }): Promise<ToolExecutionResult>
 }
 
 const contexts: Context[] = []
@@ -126,16 +133,17 @@ async function createWindowsHarness(userMessage: string | ((outside: string) => 
     classifierCalls,
     events,
     run(callId, command, options = {}) {
+      const sandboxArguments = options.sandboxArguments ?? (options.escalate === true ? {
+        sandbox_permissions: 'danger-full-access',
+        justification: 'write the explicitly requested Windows fixture ' + outside,
+      } : {})
       return context.tools.execute({
         callId: CallId(callId),
         name: 'pwsh',
         arguments: {
           command,
           description: 'native Windows business scenario command',
-          ...(options.escalate === true ? {
-            sandbox_permissions: 'danger-full-access',
-            justification: `write the explicitly requested Windows fixture ${outside}`,
-          } : {}),
+          ...sandboxArguments,
         },
         agent,
         signal: new AbortController().signal,
@@ -145,6 +153,64 @@ async function createWindowsHarness(userMessage: string | ((outside: string) => 
 }
 
 describe.skipIf(!nativeWindowsPwsh)('Auto business flows through the real Windows ACL sandbox', () => {
+  it('rejects redundant workspace-write requests before classifier, approval, and PowerShell body activity', async () => {
+    const harness = await createWindowsHarness('继续执行普通的 Windows 工作区操作。')
+    const target = join(harness.outside, 'redundant-must-not-exist.txt')
+    const variants: Array<Record<string, unknown>> = [
+      { sandbox_permissions: 'workspace-write' },
+      { sandbox_permissions: 'workspace-write', justification: '' },
+      { sandbox_permissions: 'workspace-write', justification: ' ' + String.fromCharCode(9) + ' ' },
+      { sandbox_permissions: 'workspace-write', justification: 'the model repeated the standing mode' },
+    ]
+    for (const [index, sandboxArguments] of variants.entries()) {
+      const result = await harness.run('windows-redundant-' + index, 'Set-Content -LiteralPath ' + pwshQuote(target) + ' -Value blocked', {
+        sandboxArguments,
+      })
+      expect(result.isError, JSON.stringify(sandboxArguments)).toBe(true)
+    }
+    expect(existsSync(target)).toBe(false)
+    expect(harness.classifierCalls).toEqual([])
+    expect(harness.events.filter(event => event.type === 'approval/asked')).toHaveLength(0)
+  }, 60_000)
+
+  it('retries a redundant request successfully after removing both sandbox fields', async () => {
+    const harness = await createWindowsHarness('在当前 Windows 工作区内生成并验证结果。')
+    const target = join(harness.workspace, 'fieldless-retry.txt')
+    const redundant = await harness.run('windows-redundant-before-retry', 'Set-Content -LiteralPath ' + pwshQuote(target) + ' -Value blocked', {
+      sandboxArguments: {
+        sandbox_permissions: 'workspace-write',
+        justification: 'standing mode is already workspace-write',
+      },
+    })
+    expect(redundant.isError).toBe(true)
+
+    const retry = await harness.run('windows-fieldless-retry', 'Set-Content -LiteralPath ' + pwshQuote(target) + ' -Value retried -NoNewline')
+    expect(retry.isError).toBe(false)
+    expect(await readFile(target, 'utf8')).toBe('retried')
+    expect(harness.classifierCalls).toEqual([])
+    expect(harness.events.filter(event => event.type === 'approval/asked')).toHaveLength(0)
+  }, 60_000)
+
+  it('fails closed for unknown modes and blank danger-full-access justification', async () => {
+    const harness = await createWindowsHarness('继续执行普通的 Windows 工作区操作。')
+    const target = join(harness.workspace, 'invalid-must-not-exist.txt')
+    const cases: Array<Record<string, unknown>> = [
+      { sandbox_permissions: 'read-only', justification: 'unsupported mode' },
+      { sandbox_permissions: '' },
+      { sandbox_permissions: 'danger-full-access' },
+      { sandbox_permissions: 'danger-full-access', justification: ' ' + String.fromCharCode(9) + ' ' },
+    ]
+    for (const [index, sandboxArguments] of cases.entries()) {
+      const result = await harness.run('windows-invalid-' + index, 'Set-Content -LiteralPath ' + pwshQuote(target) + ' -Value blocked', {
+        sandboxArguments,
+      })
+      expect(result.isError, JSON.stringify(sandboxArguments)).toBe(true)
+    }
+    expect(existsSync(target)).toBe(false)
+    expect(harness.classifierCalls).toEqual([])
+    expect(harness.events.filter(event => event.type === 'approval/asked')).toHaveLength(0)
+  }, 60_000)
+
   it('runs ordinary assignment and pipeline syntax inside the workspace without classification', async () => {
     const harness = await createWindowsHarness('Build and verify this Windows workspace.')
     const target = join(harness.workspace, 'business.txt')

@@ -4,7 +4,7 @@
 
 `dsh-auto-mode` adds an `Auto` permission preset, a Host policy on the official `ctx.tools` pipeline, and a small Web UI decorator. It does not provide its own executor or sandbox. Calls outside a Session whose durable preset is `auto` retain the official Read Only, Workspace Write, or Full access behavior.
 
-The implementation targets the official DeepSeek Harness checkout at `47f943859bef60e4160492346772ded9b24f765a` and is built and tested against the public `0.1.0-rc.6` packages. The relevant upstream seams are:
+The implementation targets the official DeepSeek Harness checkout at `47f943859bef60e4160492346772ded9b24f765a` and is built and tested against the public `0.1.1-rc.2` packages. The relevant upstream seams are:
 
 - `@deepseek-ai/dsh-permission-presets` for durable preset selection;
 - `@deepseek-ai/dsh-sandbox-policy` and the sandboxed shell/filesystem providers for per-call file authority;
@@ -24,6 +24,10 @@ The bundle inserts Auto between Workspace Write and Full access:
 | Full access | `danger-full-access` | `never` |
 
 Auto and Workspace Write share a standing file boundary but not behavior. Auto automatically reviews semantic risks and may bridge one approved `danger-full-access` retry into the official approval seam. Full access remains the explicit unsandboxed mode and bypasses this plugin.
+
+### rc.2 same-mode mitigation
+
+The rc.2 official executor rejects a requested `workspace-write` when the effective standing mode is already `workspace-write`; the request is not strictly wider. Auto therefore classifies the raw request as `redundant-standing` and returns a stable recoverable denial before classifier, approval, grant, or tool-body activity. The instruction requires a new call with both sandbox fields omitted, after which the ordinary policy path runs. Auto never mutates the original `ToolExecution.arguments`, wraps the official executor, or claims transparent execution. This is a detection-and-retry mitigation for rc.2, not an upstream fix; Issue #8 remains open.
 
 Normal Agent calls derive `workspaceRoot` from the Session's immutable canonical cwd. A command-level `workdir` can change process cwd but cannot change the sandbox write root. The official sandbox limits filesystem writes only: reads, sockets, process visibility, external services, and destructive changes inside the workspace require separate policy where their semantics matter. Linux bwrap/Landlock and macOS Seatbelt provide OS enforcement; the Windows restricted-token/ACL runner reports `partial` enforcement because of its documented `Everyone`, hard-link, and non-ACL-volume boundaries.
 

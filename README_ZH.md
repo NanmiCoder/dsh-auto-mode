@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm 版本"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT 许可证"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-202724" alt="已针对 DeepSeek Harness 0.1.0-rc.6 测试">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.1--rc.2-202724" alt="已针对 DeepSeek Harness 0.1.1-rc.2 测试">
 </p>
 
 ## 为什么需要 Auto？
@@ -63,6 +63,10 @@ dsh web
 | Workspace Write | `workspace-write` | ask | 不启用 |
 | **自动审批（Auto）** | `workspace-write` | ask | **启用** |
 | Full access | `danger-full-access` | never | 不启用 |
+
+### DSH 0.1.1-rc.2 同值请求
+
+rc.2 官方执行器只接受严格更宽的沙箱请求。Auto 常驻的就是 `workspace-write`，因此模型生成的 `sandbox_permissions: "workspace-write"` 不会被透明改写或执行。插件会在分类器、审批和工具主体之前检测到它，并返回可恢复的指引，要求用完全移除 `sandbox_permissions` 与 `justification` 的同一调用重试。这是针对 rc.2 的“检测 + 无字段重试”缓解，不是修复上游严格扩权限制；Issue #8 仍保持开放。
 
 Auto 的普通操作保留在 Workspace Write 边界内，只有明确的一次性越权请求才可能被自动批准：
 

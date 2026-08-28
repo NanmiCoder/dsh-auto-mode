@@ -46,18 +46,56 @@ function containsCredentialMaterial(argumentsValue: unknown): boolean {
 }
 
 /** One model-requested, tool-native widening of the standing workspace sandbox. */
+export interface SandboxWideningRequest {
+  readonly requestedMode: 'danger-full-access'
+  readonly justification: string
+}
+
+/**
+ * @deprecated Use `SandboxRequestState` / `sandboxRequestState` for new code.
+ * Kept as a compatibility view for consumers of the pre-rc.2 export.
+ */
 export interface SandboxEscalationRequest {
   readonly requestedMode: string
   readonly justification: string
 }
 
-/** Read the official paired sandbox escalation arguments without trusting them as authorization. */
+/** Semantic state of the raw sandbox fields before any authorization decision. */
+export type SandboxRequestState =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'redundant-standing' }
+  | { readonly kind: 'widening'; readonly request: SandboxWideningRequest }
+  | { readonly kind: 'invalid'; readonly requestedMode: unknown }
+
+/** Classify the official sandbox request fields without treating them as authorization. */
+export function sandboxRequestState(argumentsValue: unknown): SandboxRequestState {
+  const args = record(argumentsValue)
+  if (args === undefined || !Object.prototype.hasOwnProperty.call(args, 'sandbox_permissions')) {
+    return { kind: 'absent' }
+  }
+  const requestedMode = args.sandbox_permissions
+  if (typeof requestedMode !== 'string') return { kind: 'invalid', requestedMode }
+  if (requestedMode === 'workspace-write') return { kind: 'redundant-standing' }
+  if (requestedMode === 'danger-full-access') {
+    return {
+      kind: 'widening',
+      request: {
+        requestedMode,
+        justification: typeof args?.justification === 'string' ? args.justification : '',
+      },
+    }
+  }
+  return { kind: 'invalid', requestedMode }
+}
+
+/** Read the legacy paired sandbox fields without treating them as authorization. */
 export function sandboxEscalationRequest(argumentsValue: unknown): SandboxEscalationRequest | undefined {
   const args = record(argumentsValue)
-  if (typeof args?.sandbox_permissions !== 'string') return undefined
+  const requestedMode = args?.sandbox_permissions
+  if (typeof requestedMode !== 'string') return undefined
   return {
-    requestedMode: args.sandbox_permissions,
-    justification: typeof args.justification === 'string' ? args.justification : '',
+    requestedMode,
+    justification: typeof args?.justification === 'string' ? args.justification : '',
   }
 }
 
