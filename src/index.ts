@@ -1,14 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type LlmCallConfig, type ToolSchema } from '@deepseek-ai/dsh-llm'
 import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets'
-import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { PreToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from './artifacts.js'
 import { createHttpClassifier, sanitizeClassifierArguments, sanitizeClassifierText } from './classifier.js'
 import { createDshClassifier } from './dsh-classifier.js'
 import { AutoApprovalGrants } from './escalation.js'
 import { resolveRoots, type RootOptions } from './paths.js'
-import { assessTool, hardDenyReason, sandboxEscalationRequest } from './policy.js'
+import { assessTool, hardDenyReason, sandboxRequestState } from './policy.js'
 import type { SafetyClassifier } from './types.js'
 
 export { ArtifactRegistry } from './artifacts.js'
@@ -24,11 +24,22 @@ export const name = 'auto-permission-mode'
 export const inject = ['tools', 'llm']
 /** Official permission preset key that activates this policy. */
 export const AUTO_PERMISSION_PRESET = 'auto'
+export const AUTO_MODE_REDUNDANT_SANDBOX_MARKER = '[auto-mode redundant sandbox request]'
+export const AUTO_MODE_REDUNDANT_SANDBOX_REASON = `${AUTO_MODE_REDUNDANT_SANDBOX_MARKER} Auto already runs in workspace-write. Retry the same tool call after completely removing sandbox_permissions and justification; this call did not execute.`
+export const AUTO_MODE_REDUNDANT_SANDBOX_RETRY_CONTEXT = [
+  'AUTO MODE RECOVERY NOTICE: The immediately preceding tool call did not execute.',
+  `It was blocked by ${AUTO_MODE_REDUNDANT_SANDBOX_MARKER}; this is not an escalation request.`,
+  'Your next tool call must retry the same ordinary workspace operation with both object properties completely absent: sandbox_permissions and justification.',
+  'Do not send either property as null, an empty string, whitespace, or workspace-write. Do not change the target, add unrelated work, or switch to danger-full-access.',
+  'After the field-less retry succeeds, continue with normal result verification.',
+].join('\n')
 
 /** Dynamic Agent guidance shown only while Auto (or inherited Auto) is active. */
 export const AUTO_MODE_AGENT_GUIDANCE = [
   '<auto_mode_policy>',
   'Work normally inside the workspace-write sandbox. Do not ask the user merely because Bash or PowerShell syntax is unfamiliar.',
+  'For ordinary workspace work, omit sandbox_permissions and justification entirely. Never send workspace-write as a sandbox_permissions value.',
+  'If you receive ' + AUTO_MODE_REDUNDANT_SANDBOX_MARKER + ', the previous call did not execute. Your immediate recovery is one new call for the same ordinary workspace operation with both sandbox_permissions and justification completely absent. Never send either key as null, an empty string, whitespace, or workspace-write; do not change the target or turn this recovery into danger-full-access.',
   'If a necessary, narrow operation is denied only because it must write outside the workspace, retry that exact operation once with sandbox_permissions="danger-full-access" and a concrete justification. Split unrelated actions into separate calls; never request standing or broad access.',
   'Treat deletion as the highest-risk routine operation. You may clean up an exact artifact created during this live session. For pre-existing data, act only when the direct user explicitly requested deletion of the exact literal target; never widen that authority to a variable, glob, parent directory, sibling, or additional target.',
   'When permanent deletion was not explicitly requested, prefer a reversible move/backup or a version-control-backed deletion. If policy denies a hidden target, resolve it and retry with visible literal paths.',
@@ -176,11 +187,54 @@ function trustedUserMessages(authority: ToolExecution['agent']): string[] {
   return messages.reverse()
 }
 
+function isRedundantSandboxResult(result: Readonly<ToolExecutionResult>): boolean {
+  return result.isError && result.error.message === AUTO_MODE_REDUNDANT_SANDBOX_REASON
+}
+
+function redundantSandboxRetryContext() {
+  return createUserMessage({
+    content: [{ type: 'text', text: AUTO_MODE_REDUNDANT_SANDBOX_RETRY_CONTEXT }],
+    source: {
+      kind: 'plugin',
+      plugin: name,
+      form: 'notice',
+      summary: 'Auto Mode requires a field-less retry.',
+    },
+  })
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function projectFieldlessRecoveryTool(tool: ToolSchema): ToolSchema {
+  const parameters = record(tool.parameters)
+  const properties = record(parameters?.properties)
+  if (parameters === undefined || properties === undefined) return tool
+  const hasSandboxPermissions = Object.prototype.hasOwnProperty.call(properties, 'sandbox_permissions')
+  const hasJustification = Object.prototype.hasOwnProperty.call(properties, 'justification')
+  if (!hasSandboxPermissions && !hasJustification) return tool
+
+  const { sandbox_permissions: _sandboxPermissions, justification: _justification, ...projectedProperties } = properties
+  const required = Array.isArray(parameters.required)
+    ? parameters.required.filter(entry => entry !== 'sandbox_permissions' && entry !== 'justification')
+    : parameters.required
+  return {
+    ...tool,
+    parameters: {
+      ...parameters,
+      properties: projectedProperties,
+      ...(Array.isArray(required) ? { required } : {}),
+    },
+  }
+}
+
 /** Install the automatic permission policy on the official tool pipeline. */
 export function apply(ctx: Context, config: Config = {}): void {
   const artifacts = new ArtifactRegistry()
   const grants = new AutoApprovalGrants()
   const classifierFailures = new WeakMap<object, number>()
+  const recoveryPresentations = new WeakMap<object, Set<string>>()
   const classifier = classifierFrom(ctx, config)
   const presetName = config.presetName ?? AUTO_PERMISSION_PRESET
   const rootOptions: RootOptions = {
@@ -194,6 +248,34 @@ export function apply(ctx: Context, config: Config = {}): void {
     exec, parentAgent, presetName,
   )
   const isAutoExecution = (exec: Readonly<ToolExecution>): boolean => authorityFor(exec) !== undefined
+  const armRecoveryPresentation = (exec: Readonly<ToolExecution>): void => {
+    const agent = exec.agent
+    if (agent === undefined) return
+    const pending = recoveryPresentations.get(agent)
+    if (pending !== undefined) {
+      pending.add(exec.name)
+      return
+    }
+    recoveryPresentations.set(agent, new Set([exec.name]))
+  }
+
+  ctx.on('system-prompt/assemble', async (assembly, assembleContext, next) => {
+    const resolved = await next()
+    const agent = assembleContext.agent
+    if (agent === undefined) return resolved
+    const affectedTools = recoveryPresentations.get(agent)
+    if (affectedTools === undefined) return resolved
+    recoveryPresentations.delete(agent)
+
+    let projected = false
+    const tools = resolved.tools.map(tool => {
+      if (!affectedTools.has(tool.name)) return tool
+      const replacement = projectFieldlessRecoveryTool(tool)
+      projected ||= replacement !== tool
+      return replacement
+    })
+    return projected ? { ...resolved, tools } : resolved
+  }, { prepend: true })
 
   ctx.inject(['systemPrompt'], (scope) => {
     scope.systemPrompt.context({
@@ -212,24 +294,32 @@ export function apply(ctx: Context, config: Config = {}): void {
     const hard = hardDenyReason(exec, roots)
     if (hard !== undefined) return { kind: 'deny', reason: `[auto-mode hard deny] ${hard}` }
     const assessment = assessTool(exec, roots, artifacts)
-    if (assessment.plannedCreates !== undefined) artifacts.plan(exec, assessment.plannedCreates, roots)
     if (assessment.decision === 'deny') return { kind: 'deny', reason: `[auto-mode deterministic deny] ${assessment.reason}` }
-    const escalation = sandboxEscalationRequest(exec.arguments)
-    if (escalation !== undefined) {
-      if (escalation.requestedMode !== 'danger-full-access') {
-        return { kind: 'deny', reason: `[auto-mode invalid sandbox request] Auto already runs in workspace-write; only an exact one-shot danger-full-access escalation is wider` }
-      }
-      if (escalation.justification.trim() === '') {
+    const sandbox = sandboxRequestState(exec.arguments)
+    if (sandbox.kind === 'redundant-standing') {
+      armRecoveryPresentation(exec)
+      return { kind: 'deny', reason: AUTO_MODE_REDUNDANT_SANDBOX_REASON }
+    }
+    if (sandbox.kind === 'invalid') {
+      return { kind: 'deny', reason: '[auto-mode invalid sandbox request] only an exact one-shot danger-full-access escalation is supported' }
+    }
+    const planArtifacts = () => {
+      if (assessment.plannedCreates !== undefined) artifacts.plan(exec, assessment.plannedCreates, roots)
+    }
+    const widening = sandbox.kind === 'widening' ? sandbox.request : undefined
+    if (widening !== undefined) {
+      if (widening.justification.trim() === '') {
         return { kind: 'deny', reason: '[auto-mode invalid sandbox request] sandbox_permissions requires a non-empty justification' }
       }
       if (authorityFor(exec) !== exec.agent) {
         return { kind: 'deny', reason: '[auto-mode delegated escalation denied] a subagent cannot widen the parent workspace sandbox; report the blocked action to the parent' }
       }
     } else if (assessment.decision === 'allow') {
+      planArtifacts()
       artifacts.discoverShellCreates(exec, roots)
       return next()
     }
-    if (escalation === undefined && !assessment.classifierEligible) {
+    if (widening === undefined && !assessment.classifierEligible) {
       return { kind: 'ask', reason: `[auto-mode approval required] ${assessment.reason}` }
     }
     const authority = authorityFor(exec)
@@ -240,16 +330,16 @@ export function apply(ctx: Context, config: Config = {}): void {
         toolName: exec.name,
         arguments: sanitizeClassifierArguments(exec.arguments),
         workspaceRoot: roots.workspace,
-        policyReason: escalation === undefined
+        policyReason: widening === undefined
           ? assessment.reason
           : `exact one-shot sandbox escalation requested; underlying action: ${assessment.reason}`,
         trustedUserMessages: trustedUserMessages(authority),
         ...(assessment.filesystemEffects === undefined ? {} : { filesystemEffects: assessment.filesystemEffects }),
-        ...(escalation === undefined ? {} : {
+        ...(widening === undefined ? {} : {
           sandboxRequest: {
             currentMode: 'workspace-write' as const,
-            requestedMode: escalation.requestedMode,
-            justification: sanitizeClassifierText(escalation.justification),
+            requestedMode: widening.requestedMode,
+            justification: sanitizeClassifierText(widening.justification),
             platform: process.platform,
           },
         }),
@@ -257,7 +347,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       }, exec.signal)
       if (failureOwner !== undefined) classifierFailures.delete(failureOwner)
       if (decision.decision === 'allow') {
-        if (escalation !== undefined) grants.plan(exec, escalation)
+        planArtifacts()
+        if (widening !== undefined) grants.plan(exec, widening)
         else artifacts.discoverShellCreates(exec, roots)
         return next()
       }
@@ -265,7 +356,10 @@ export function apply(ctx: Context, config: Config = {}): void {
       // A sandbox escalation already owns one exact approval request inside
       // the official tool body. Let it ask there instead of producing two UI
       // prompts (one from tools/pre-execute and another from ctx.approval).
-      if (escalation !== undefined) return next()
+      if (widening !== undefined) {
+        planArtifacts()
+        return next()
+      }
       return { kind: 'ask', reason: `[auto-mode classifier asks] ${decision.reason}` }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -278,6 +372,14 @@ export function apply(ctx: Context, config: Config = {}): void {
         classifierFailures.set(failureOwner, failures)
       }
       return { kind: 'deny', reason: `[auto-mode classifier unavailable; action denied] ${message}` }
+    }
+  })
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    const decision = await next()
+    if (!isAutoExecution(exec) || !isRedundantSandboxResult(result) || decision.kind !== 'accept') return decision
+    return {
+      ...decision,
+      additionalContexts: [...(decision.additionalContexts ?? []), redundantSandboxRetryContext()],
     }
   })
   ctx.on('approval/request', (request, next) => {

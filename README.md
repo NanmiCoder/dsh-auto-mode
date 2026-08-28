@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm version"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-202724" alt="Tested with DeepSeek Harness 0.1.0-rc.6">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.1--rc.2-202724" alt="Tested with DeepSeek Harness 0.1.1-rc.2">
 </p>
 
 ## Why Auto?
@@ -63,6 +63,10 @@ The Web client registers its copy with DSH's official locale service. English ke
 | Workspace Write | `workspace-write` | ask | inactive |
 | **Auto** | `workspace-write` | ask | **active** |
 | Full access | `danger-full-access` | never | inactive |
+
+### DSH 0.1.1-rc.2 same-mode requests
+
+The rc.2 official executor accepts only a strictly wider sandbox request. Auto already stands at `workspace-write`, so a model-generated `sandbox_permissions: "workspace-write"` request is not transparently normalized or executed. The plugin detects it before classifier, approval, and tool execution, then returns a recoverable instruction to retry the same call with both `sandbox_permissions` and `justification` removed. This is an rc.2 detection-and-retry mitigation; it does not close the upstream strict-widening limitation, and Issue #8 remains open.
 
 Ordinary Auto work stays inside Workspace Write. Only an explicit one-shot widening may be approved automatically:
 

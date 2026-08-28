@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import type { SandboxEscalationRequest } from './policy.js'
+import type { SandboxWideningRequest } from './policy.js'
 
 interface PendingGrant {
   readonly toolName: string
@@ -19,7 +19,7 @@ function callKey(callId: unknown): string | undefined {
 export class AutoApprovalGrants {
   private readonly byAgent = new WeakMap<object, Map<string, PendingGrant>>()
 
-  plan(exec: Readonly<ToolExecution>, request: SandboxEscalationRequest): void {
+  plan(exec: Readonly<ToolExecution>, request: SandboxWideningRequest): void {
     const agent = exec.agent
     const key = callKey(exec.callId)
     if (agent === undefined || key === undefined) return

@@ -186,6 +186,29 @@ describe('real Cordis Loader composition', () => {
     await expect(run('classifier-ask', 'npx ask.py')).resolves.toMatchObject({ isError: true })
     await expect(run('classifier-invalid', 'npx invalid.py')).resolves.toMatchObject({ isError: true })
     await expect(run('full-access-root', 'rm -rf /', 'danger-full-access')).resolves.toMatchObject({ isError: false })
+    const childRedundant = await context.tools.execute({
+      callId: CallId('child-redundant'),
+      name: 'bash',
+      arguments: {
+        command: 'pnpm test',
+        sandbox_permissions: 'workspace-write',
+        justification: 'the delegated model repeated the standing mode',
+      },
+      agent: delegatedAgent,
+      signal: new AbortController().signal,
+    })
+    expect(childRedundant.isError).toBe(true)
+    expect(childRedundant.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('[auto-mode redundant sandbox request]') }),
+    ]))
+    const childRetry = await context.tools.execute({
+      callId: CallId('child-fieldless-retry'),
+      name: 'bash',
+      arguments: { command: 'pnpm test' },
+      agent: delegatedAgent,
+      signal: new AbortController().signal,
+    })
+    expect(childRetry.isError).toBe(false)
     await expect(context.tools.execute({
       callId: CallId('child-safe'), name: 'bash', arguments: { command: 'pnpm test' }, agent: delegatedAgent, signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: false })
@@ -211,7 +234,7 @@ describe('real Cordis Loader composition', () => {
     expect(childEscalation.content).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('[auto-mode delegated escalation denied]') }),
     ]))
-    expect(bodyCalls).toBe(5)
+    expect(bodyCalls).toBe(6)
     expect(ordinaryPluginBodyCalls).toBe(1)
     expect(riskyPluginBodyCalls).toBe(0)
     expect(classifierCalls).toHaveLength(5)
