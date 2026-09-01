@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm version"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-202724" alt="Tested with DeepSeek Harness 0.1.0-rc.6">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--alpha.2-202724" alt="Current main targets DeepSeek Harness 0.1.2-alpha.2">
 </p>
 
 ## Why Auto?
@@ -26,11 +26,32 @@ Coding agents need broad access to build, test, and inspect a project without st
 > [!NOTE]
 > Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
 
+> [!IMPORTANT]
+> The current `main` branch and its next release target **DeepSeek Harness 0.1.2-alpha.2**. Published plugin `0.1.5` targets the older Harness `0.1.0-rc.6` API and cannot be used on Alpha.2. Keep `0.1.5` pinned while staying on that RC host; after the Alpha.2-compatible release is published, Alpha.2 users should install the plugin's current `latest`. Updating the plugin does not update the Harness instance that is actually running.
+
+| Harness host | Plugin | Status |
+| --- | --- | --- |
+| `0.1.2-alpha.2` | Current `main`; next release | Passed packaged install, real API, macOS sandbox, and Web UI acceptance. |
+| `0.1.0-rc.6` | `0.1.5` | Previous tested pair; pin this exact plugin version while retaining the RC host. |
+| Other host versions | Keep a known-working exact plugin version | Not implied compatible by package installation alone. |
+
+See the [Alpha.2 compatibility record](./docs/alpha2-compatibility.md) and [acceptance report](./docs/alpha2-acceptance.md) for the migration surface, evidence, and validation boundary.
+
 ### npm
 
+For Harness `0.1.2-alpha.2`, after the Alpha.2-compatible plugin release is published:
+
 ```sh
-dsh plugin --profile web add @nanmicoder/dsh-auto-mode
+dsh plugin --profile web add @nanmicoder/dsh-auto-mode@latest
 ```
+
+For the old Harness `0.1.0-rc.6`, keep the last compatible plugin pinned:
+
+```sh
+dsh plugin --profile web add @nanmicoder/dsh-auto-mode@0.1.5
+```
+
+Until the Alpha.2-compatible npm release exists, use the source install below for Alpha.2.
 
 ### Build from source
 

@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool, type PreToolDecision, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
 import * as AutoMode from '../src/index.js'
 import type { ClassifierDecision, ClassifierInput } from '../src/types.js'
+import { provideTestPermissionPresets } from './harness.js'
 
 /**
  * End-to-end coverage for the reported over-prompting: an explicitly authorized
@@ -60,6 +61,7 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
   const classifierCalls: ClassifierInput[] = []
   const commands: string[] = []
   const context = new Context()
+  provideTestPermissionPresets(context)
   context.provide('agents', { get: () => undefined })
   context.provide('llm', {
     stream(generate: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -141,7 +143,7 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     async run(id, command, userMessages) {
       decision = undefined
       await context.tools.execute({
-        callId: CallId(id),
+        callId: ToolCallId(id),
         name: 'bash',
         arguments: { command },
         agent: agentFor(userMessages),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { isAutoOrDelegatedPermissionExecution, isAutoPermissionExecution } from '../src/index.js'
+import { currentTestPermissionPreset } from './harness.js'
 
 function execution(...presets: string[]): ToolExecution {
   return {
@@ -33,16 +34,16 @@ function child(parentSession: string, ...presets: string[]): ToolExecution {
 
 describe('Auto permission activation', () => {
   it('activates only for the session current preset', () => {
-    expect(isAutoPermissionExecution(execution('auto'))).toBe(true)
-    expect(isAutoPermissionExecution(execution('auto', 'danger-full-access'))).toBe(false)
-    expect(isAutoPermissionExecution(execution('danger-full-access', 'auto'))).toBe(true)
-    expect(isAutoPermissionExecution(execution('workspace-write'))).toBe(false)
-    expect(isAutoPermissionExecution({ name: 'bash', token: Symbol('mode') } as ToolExecution)).toBe(false)
+    expect(isAutoPermissionExecution(execution('auto'), currentTestPermissionPreset)).toBe(true)
+    expect(isAutoPermissionExecution(execution('auto', 'danger-full-access'), currentTestPermissionPreset)).toBe(false)
+    expect(isAutoPermissionExecution(execution('danger-full-access', 'auto'), currentTestPermissionPreset)).toBe(true)
+    expect(isAutoPermissionExecution(execution('workspace-write'), currentTestPermissionPreset)).toBe(false)
+    expect(isAutoPermissionExecution({ name: 'bash', token: Symbol('mode') } as ToolExecution, currentTestPermissionPreset)).toBe(false)
   })
 
   it('supports a deployment-specific preset key', () => {
-    expect(isAutoPermissionExecution(execution('guarded'), 'guarded')).toBe(true)
-    expect(isAutoPermissionExecution(execution('auto'), 'guarded')).toBe(false)
+    expect(isAutoPermissionExecution(execution('guarded'), currentTestPermissionPreset, 'guarded')).toBe(true)
+    expect(isAutoPermissionExecution(execution('auto'), currentTestPermissionPreset, 'guarded')).toBe(false)
   })
 
   it('inherits Auto through official subagent lineage only', () => {
@@ -52,10 +53,10 @@ describe('Auto permission activation', () => {
     // This is the real persisted shape of an AgentTeams/Workflow spawn child:
     // DSH keeps the delegated workspace sandbox and pins approval to never,
     // while Auto remains authority from the direct live parent.
-    expect(isAutoPermissionExecution(child('auto-parent', 'workspace-write'))).toBe(false)
-    expect(isAutoOrDelegatedPermissionExecution(child('auto-parent', 'workspace-write'), lookup)).toBe(true)
-    expect(isAutoOrDelegatedPermissionExecution(child('full-parent'), lookup)).toBe(false)
-    expect(isAutoOrDelegatedPermissionExecution(child('missing'), lookup)).toBe(false)
+    expect(isAutoPermissionExecution(child('auto-parent', 'workspace-write'), currentTestPermissionPreset)).toBe(false)
+    expect(isAutoOrDelegatedPermissionExecution(child('auto-parent', 'workspace-write'), lookup, currentTestPermissionPreset)).toBe(true)
+    expect(isAutoOrDelegatedPermissionExecution(child('full-parent'), lookup, currentTestPermissionPreset)).toBe(false)
+    expect(isAutoOrDelegatedPermissionExecution(child('missing'), lookup, currentTestPermissionPreset)).toBe(false)
   })
 
   it('inherits Auto across nested live subagents and rejects lineage cycles', () => {
@@ -63,10 +64,10 @@ describe('Auto permission activation', () => {
     const middle = child('auto-parent', 'workspace-write').agent
     const nested = child('middle', 'workspace-write')
     const lookup = (id: string) => id === 'auto-parent' ? autoParent : id === 'middle' ? middle : undefined
-    expect(isAutoOrDelegatedPermissionExecution(nested, lookup)).toBe(true)
+    expect(isAutoOrDelegatedPermissionExecution(nested, lookup, currentTestPermissionPreset)).toBe(true)
 
     const first = child('second').agent
     const second = child('first').agent
-    expect(isAutoOrDelegatedPermissionExecution(child('first'), id => id === 'first' ? first : second)).toBe(false)
+    expect(isAutoOrDelegatedPermissionExecution(child('first'), id => id === 'first' ? first : second, currentTestPermissionPreset)).toBe(false)
   })
 })

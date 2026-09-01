@@ -7,10 +7,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -20,6 +21,7 @@ import ToolRuntime, { type ToolExecutionInput, type ToolExecutionResult } from '
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import * as AutoMode from '../src/index.js'
 import type { ClassifierInput } from '../src/types.js'
+import { provideTestPermissionPresets } from './harness.js'
 
 const seatbeltProbe = process.platform === 'darwin'
   ? spawnSync('sandbox-exec', ['-p', '(version 1) (allow default)', '--', 'true'], { timeout: 5_000, stdio: 'ignore' })
@@ -75,6 +77,7 @@ async function createBusinessHarness(userMessage: string | ((paths: BusinessPath
     },
   ]
   const context = new Context()
+  provideTestPermissionPresets(context)
   contexts.push(context)
   context.provide('agents', { get: () => undefined })
   context.provide('llm', {
@@ -129,6 +132,7 @@ async function createBusinessHarness(userMessage: string | ((paths: BusinessPath
   await context.plugin(ToolRuntime)
   await context.plugin(ApprovalService, { policy: 'ask' })
   await context.plugin(LocalSandboxProvider, {})
+  await context.plugin(SessionProjectionRegistry)
   await context.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
   await context.plugin(SandboxedFileSystem, { cwd: workspace })
   await context.plugin(LocalSubprocessRuntime)
@@ -163,7 +167,7 @@ async function createBusinessHarness(userMessage: string | ((paths: BusinessPath
     events,
     run(callId, command, options = {}) {
       return context.tools.execute({
-        callId: CallId(callId),
+        callId: ToolCallId(callId),
         name: 'bash',
         arguments: {
           command,
@@ -179,7 +183,7 @@ async function createBusinessHarness(userMessage: string | ((paths: BusinessPath
     },
     runEditor(callId, argumentsValue) {
       return context.tools.execute({
-        callId: CallId(callId),
+        callId: ToolCallId(callId),
         name: 'str_replace_editor',
         arguments: argumentsValue,
         agent,

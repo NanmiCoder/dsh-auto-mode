@@ -6,7 +6,7 @@ import { AutoApprovalGrants } from '../src/escalation.js'
 function execution(agent: object, callId = 'call-1'): ToolExecution {
   return {
     callId,
-    rootCallId: callId,
+    rootToolCallId: callId,
     name: 'bash',
     arguments: {},
     agent,

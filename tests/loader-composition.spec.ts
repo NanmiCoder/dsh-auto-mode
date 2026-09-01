@@ -6,10 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import { CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
 import * as AutoMode from '../src/index.js'
+import { provideTestPermissionPresets } from './harness.js'
 
 let context: Context | undefined
 let root: string | undefined
@@ -37,6 +38,7 @@ describe('real Cordis Loader composition', () => {
     ].join('\n'))
 
     context = new Context()
+    provideTestPermissionPresets(context)
     const agents = new Map<string, NonNullable<ToolExecutionInput['agent']>>()
     const classifierCalls: Array<Record<string, unknown>> = []
     context.provide('agents', { get: (id: string) => agents.get(id) })
@@ -170,15 +172,15 @@ describe('real Cordis Loader composition', () => {
       },
     } as unknown as NonNullable<ToolExecutionInput['agent']>
     const run = (id: string, command: string, preset = 'auto') => context!.tools.execute({
-      callId: CallId(id), name: 'bash', arguments: { command }, agent: agentFor(preset), signal: new AbortController().signal,
+      callId: ToolCallId(id), name: 'bash', arguments: { command }, agent: agentFor(preset), signal: new AbortController().signal,
     })
 
     await expect(run('safe', 'pnpm test')).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
-      callId: CallId('ordinary-plugin'), name: 'plugin_render_diagram', arguments: { source: 'graph TD' }, agent: agentFor('auto'), signal: new AbortController().signal,
+      callId: ToolCallId('ordinary-plugin'), name: 'plugin_render_diagram', arguments: { source: 'graph TD' }, agent: agentFor('auto'), signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
-      callId: CallId('risky-plugin'), name: 'cloud_deploy', arguments: { target: 'production' }, agent: agentFor('auto'), signal: new AbortController().signal,
+      callId: ToolCallId('risky-plugin'), name: 'cloud_deploy', arguments: { target: 'production' }, agent: agentFor('auto'), signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: true })
     await expect(run('root', 'rm -rf /')).resolves.toMatchObject({ isError: true })
     await expect(run('ambiguous', 'python script.py')).resolves.toMatchObject({ isError: false })
@@ -187,17 +189,17 @@ describe('real Cordis Loader composition', () => {
     await expect(run('classifier-invalid', 'npx invalid.py')).resolves.toMatchObject({ isError: true })
     await expect(run('full-access-root', 'rm -rf /', 'danger-full-access')).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
-      callId: CallId('child-safe'), name: 'bash', arguments: { command: 'pnpm test' }, agent: delegatedAgent, signal: new AbortController().signal,
+      callId: ToolCallId('child-safe'), name: 'bash', arguments: { command: 'pnpm test' }, agent: delegatedAgent, signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: false })
     await expect(context.tools.execute({
-      callId: CallId('child-root'), name: 'bash', arguments: { command: 'rm -rf /' }, agent: delegatedAgent, signal: new AbortController().signal,
+      callId: ToolCallId('child-root'), name: 'bash', arguments: { command: 'rm -rf /' }, agent: delegatedAgent, signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: true })
     const childClassified = await context.tools.execute({
-      callId: CallId('child-classified'), name: 'bash', arguments: { command: 'npx child' }, agent: delegatedAgent, signal: new AbortController().signal,
+      callId: ToolCallId('child-classified'), name: 'bash', arguments: { command: 'npx child' }, agent: delegatedAgent, signal: new AbortController().signal,
     })
     expect(childClassified.isError, JSON.stringify(childClassified)).toBe(false)
     const childEscalation = await context.tools.execute({
-      callId: CallId('child-escalation'),
+      callId: ToolCallId('child-escalation'),
       name: 'bash',
       arguments: {
         command: 'printf widened',

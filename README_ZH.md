@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm 版本"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT 许可证"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-202724" alt="已针对 DeepSeek Harness 0.1.0-rc.6 测试">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--alpha.2-202724" alt="当前 main 面向 DeepSeek Harness 0.1.2-alpha.2">
 </p>
 
 ## 为什么需要 Auto？
@@ -26,11 +26,32 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 > [!NOTE]
 > 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
 
+> [!IMPORTANT]
+> 当前 `main` 和下一个发布版本面向 **DeepSeek Harness 0.1.2-alpha.2**。已经发布的插件 `0.1.5` 使用旧 Harness `0.1.0-rc.6` API，不能用于 Alpha.2。继续使用该 RC 宿主时请精确固定插件 `0.1.5`；Alpha.2 兼容版本发布后，Alpha.2 用户应安装插件当时的 `latest`。升级插件不会自动升级实际运行的 Harness 宿主。
+
+| Harness 宿主 | 插件 | 状态 |
+| --- | --- | --- |
+| `0.1.2-alpha.2` | 当前 `main`；下一个发布版本 | 已通过打包安装、真实 API、macOS 沙箱和 Web UI 验收。 |
+| `0.1.0-rc.6` | `0.1.5` | 上一组已测试组合；保留 RC 宿主时精确固定这个插件版本。 |
+| 其他宿主版本 | 固定当前已知可用的插件版本 | 安装成功本身不代表 API 兼容。 |
+
+迁移范围、证据和验证边界见 [Alpha.2 兼容记录](./docs/alpha2-compatibility.md)与[验收报告](./docs/alpha2-acceptance.md)。
+
 ### npm
 
+Harness `0.1.2-alpha.2` 用户请在 Alpha.2 兼容插件发布后安装最新版本：
+
 ```sh
-dsh plugin --profile web add @nanmicoder/dsh-auto-mode
+dsh plugin --profile web add @nanmicoder/dsh-auto-mode@latest
 ```
+
+继续使用旧 Harness `0.1.0-rc.6` 时，请固定最后一个兼容插件版本：
+
+```sh
+dsh plugin --profile web add @nanmicoder/dsh-auto-mode@0.1.5
+```
+
+在 Alpha.2 兼容 npm 版本发布前，Alpha.2 用户请按下面的源码方式安装。
 
 ### 从源码构建
 

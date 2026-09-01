@@ -4,7 +4,7 @@
 
 `dsh-auto-mode` adds an `Auto` permission preset, a Host policy on the official `ctx.tools` pipeline, and a small Web UI decorator. It does not provide its own executor or sandbox. Calls outside a Session whose durable preset is `auto` retain the official Read Only, Workspace Write, or Full access behavior.
 
-The implementation targets the official DeepSeek Harness checkout at `47f943859bef60e4160492346772ded9b24f765a` and is built and tested against the public `0.1.0-rc.6` packages. The relevant upstream seams are:
+The implementation targets the official DeepSeek Harness tag `dsh-v0.1.2-alpha.2` at `0a53fb55bea101816fa226bb964ae2bed71c343b` and is built and tested against the exact public `0.1.2-alpha.2` packages. The relevant upstream seams are:
 
 - `@deepseek-ai/dsh-permission-presets` for durable preset selection;
 - `@deepseek-ai/dsh-sandbox-policy` and the sandboxed shell/filesystem providers for per-call file authority;

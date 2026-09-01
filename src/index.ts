@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets'
+// Type-only: declares the Alpha.2 permissionPresets service on Cordis Context.
+import type {} from '@deepseek-ai/dsh-permission-presets'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import { ArtifactRegistry } from './artifacts.js'
 import { createHttpClassifier, sanitizeClassifierArguments, sanitizeClassifierText } from './classifier.js'
@@ -21,7 +22,7 @@ export * from './shell.js'
 export type * from './types.js'
 
 export const name = 'auto-permission-mode'
-export const inject = ['tools', 'llm']
+export const inject = ['tools', 'llm', 'permissionPresets']
 /** Official permission preset key that activates this policy. */
 export const AUTO_PERMISSION_PRESET = 'auto'
 
@@ -63,10 +64,20 @@ export const Config: z<Config> = z.object({
   classifierMaxOutputTokens: z.number().default(1_024),
 })
 
+type AgentSession = NonNullable<ToolExecution['agent']>['session']
+
+/** Current preset resolver supplied by the Alpha.2 permission projection service. */
+export interface CurrentPermissionPreset {
+  (session: AgentSession): string
+}
+
 /** Whether the pending tool call belongs to a session currently using the Auto permission preset. */
-export function isAutoPermissionExecution(exec: Readonly<ToolExecution>, presetName = AUTO_PERMISSION_PRESET): boolean {
-  const events = exec.agent?.session.events
-  return events !== undefined && effectivePermissionPreset(events) === presetName
+export function isAutoPermissionExecution(
+  exec: Readonly<ToolExecution>,
+  currentPreset: CurrentPermissionPreset,
+  presetName = AUTO_PERMISSION_PRESET,
+): boolean {
+  return exec.agent !== undefined && currentPreset(exec.agent.session) === presetName
 }
 
 type ParentSessionId = NonNullable<NonNullable<ToolExecution['agent']>['session']['header']['parentSession']>
@@ -85,18 +96,20 @@ interface ParentAgentLookup {
 export function isAutoOrDelegatedPermissionExecution(
   exec: Readonly<ToolExecution>,
   parentAgent: ParentAgentLookup,
+  currentPreset: CurrentPermissionPreset,
   presetName = AUTO_PERMISSION_PRESET,
 ): boolean {
-  return autoPermissionAuthority(exec, parentAgent, presetName) !== undefined
+  return autoPermissionAuthority(exec, parentAgent, currentPreset, presetName) !== undefined
 }
 
 /** Resolve the direct Auto session whose durable user messages authorize this execution. */
 export function autoPermissionAuthority(
   exec: Readonly<ToolExecution>,
   parentAgent: ParentAgentLookup,
+  currentPreset: CurrentPermissionPreset,
   presetName = AUTO_PERMISSION_PRESET,
 ): ToolExecution['agent'] | undefined {
-  if (isAutoPermissionExecution(exec, presetName)) return exec.agent
+  if (isAutoPermissionExecution(exec, currentPreset, presetName)) return exec.agent
   let session = exec.agent?.session
   const visited = new Set<string>()
   while (session?.header?.origin === 'subagent' && session.header.parentSession !== undefined) {
@@ -107,7 +120,7 @@ export function autoPermissionAuthority(
     const parent = parentAgent(parentSessionId)
     if (parent === undefined) return undefined
     const parentExec = { ...exec, agent: parent }
-    if (isAutoPermissionExecution(parentExec, presetName)) return parent
+    if (isAutoPermissionExecution(parentExec, currentPreset, presetName)) return parent
     session = parent.session
   }
   return undefined
@@ -190,8 +203,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   const rootsFor = (exec: Readonly<ToolExecution>) => resolveRoots(exec.agent?.session.header.cwd, rootOptions)
   const parentAgent: ParentAgentLookup = sessionId => ctx.get('agents')?.get(sessionId)
+  const currentPreset: CurrentPermissionPreset = session => ctx.permissionPresets.current(session)
   const authorityFor = (exec: Readonly<ToolExecution>): ToolExecution['agent'] | undefined => autoPermissionAuthority(
-    exec, parentAgent, presetName,
+    exec, parentAgent, currentPreset, presetName,
   )
   const isAutoExecution = (exec: Readonly<ToolExecution>): boolean => authorityFor(exec) !== undefined
 

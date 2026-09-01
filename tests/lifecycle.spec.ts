@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
 import * as AutoMode from '../src/index.js'
 import { AUTO_MODE_AGENT_GUIDANCE } from '../src/index.js'
+import { provideTestPermissionPresets } from './harness.js'
 
 let context: Context | undefined
 
@@ -16,6 +17,7 @@ afterEach(async () => {
 describe('plugin lifecycle', () => {
   it('removes its monotonic guard and listeners on fiber disposal', async () => {
     context = new Context()
+    provideTestPermissionPresets(context)
     context.provide('llm', { stream: () => (async function* () {})() })
     await context.plugin(SystemPrompt)
     await context.plugin(ToolRuntime)
@@ -39,7 +41,7 @@ describe('plugin lifecycle', () => {
       },
     } as unknown as NonNullable<ToolExecutionInput['agent']>
     const run = (id: string) => context!.tools.execute({
-      callId: CallId(id), name: 'bash', arguments: { command: 'rm -rf /' }, agent, signal: new AbortController().signal,
+      callId: ToolCallId(id), name: 'bash', arguments: { command: 'rm -rf /' }, agent, signal: new AbortController().signal,
     })
     const autoContext = (await context.systemPrompt.assemble({ agent })).contexts
       .find(item => item.name === 'auto-mode:policy')?.text
