@@ -11,7 +11,7 @@ The public dsh-auto-mode `0.1.5` package was used as the old-host control and
 the failing Alpha baseline. The runtime candidate used for the full business
 flows was packed from commit `dcc2736` with SHA-256
 `559479901e7aa13dd9575a523c44c32ec12397da7e87b7152c24f9229b492085`.
-After the documentation correction, the package was rebuilt and installed into
+For release `0.1.6`, the package was rebuilt and installed into
 fresh Alpha.2 and Alpha.3 Web and Headless profiles. Both final installs had
 identical runtime entry hashes: host
 `f7d38a522112392c03e9facb2e76ea24f57082e70e0a3f221d2e123b3dfeb6e5` and client
@@ -39,9 +39,9 @@ identical runtime entry hashes: host
 | --- | --- | --- | --- |
 | `0.1.1-rc.2` | public `0.1.5`, exact pin | Web and Headless profile installs passed; Web cold-started. | A real Auto session recorded `permission/preset: auto`, deleted the exact named fixture and created validated JSON through two Bash calls. |
 | `0.1.2-alpha.2` | public `0.1.5` | Install passed; Web failed before startup with the reported missing `effectivePermissionPreset` export. | Blocked by the loader failure, as expected. |
-| `0.1.2-alpha.2` | packaged candidate | Web and Headless installs and Web cold start passed. | Real API, native macOS sandbox and human-style Web UI passed. |
+| `0.1.2-alpha.2` | release `0.1.6` | Web and Headless installs and Web cold start passed. | Real API, native macOS sandbox and human-style Web UI passed. |
 | `0.1.2-alpha.3` | public `0.1.5` | Install passed; Web failed with the same missing export. | Blocked by the loader failure, as expected. |
-| `0.1.2-alpha.3` | packaged candidate | Web and Headless installs and Web cold start passed. | Real Headless and Web UI Auto sessions each executed two Bash calls and produced independently validated effects; reload preserved the mode and conversation. |
+| `0.1.2-alpha.3` | release `0.1.6` | Web and Headless installs and Web cold start passed. | Real Headless and Web UI Auto sessions each executed two Bash calls and produced independently validated effects; reload preserved the mode and conversation. |
 
 ## Results
 

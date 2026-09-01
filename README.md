@@ -27,12 +27,12 @@ Coding agents need broad access to build, test, and inspect a project without st
 > Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
 
 > [!IMPORTANT]
-> The current `main` branch and its next release target **DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3**. The currently published plugin `0.1.5` belongs to the older Harness `0.1.1-rc.2` line and fails to load on both tested Alpha hosts. Keep plugin `0.1.5` pinned while staying on that RC host. After the Alpha-compatible release is published, Alpha users should install the plugin's current `latest`. Updating this plugin does not update the Harness host that is actually running.
+> Plugin `0.1.6` targets **DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3**. Plugin `0.1.5` belongs to the older Harness `0.1.1-rc.2` line and fails to load on both tested Alpha hosts. Keep plugin `0.1.5` pinned while staying on that RC host; Alpha users should install plugin `0.1.6` or the current `latest`. Updating this plugin does not update the Harness host that is actually running.
 
 | Harness host | Plugin | Status |
 | --- | --- | --- |
-| `0.1.2-alpha.2` | Current `main`; next release | Passed packaged install, real API, macOS sandbox, and Web UI acceptance. |
-| `0.1.2-alpha.3` | Current `main`; next release | Passed packaged Web and Headless install, cold start, real API, Auto tool execution, Web UI, and reload persistence. |
+| `0.1.2-alpha.2` | `0.1.6` | Passed packaged install, real API, macOS sandbox, and Web UI acceptance. |
+| `0.1.2-alpha.3` | `0.1.6` | Passed packaged Web and Headless install, cold start, real API, Auto tool execution, Web UI, and reload persistence. |
 | `0.1.1-rc.2` | `0.1.5` | Passed exact public install, Web cold start, and a real Auto API flow. Pin this exact plugin version while retaining the RC host. |
 | Other host versions | Keep a known-working exact plugin version | Not implied compatible by package installation alone. |
 
@@ -40,7 +40,7 @@ See the [Alpha compatibility record](./docs/alpha2-compatibility.md) and [accept
 
 ### npm
 
-For Harness `0.1.2-alpha.2` or `0.1.2-alpha.3`, after the Alpha-compatible plugin release is published:
+For Harness `0.1.2-alpha.2` or `0.1.2-alpha.3`, install the current Alpha-compatible plugin:
 
 ```sh
 dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
@@ -52,7 +52,7 @@ For the old Harness `0.1.1-rc.2`, keep the last compatible plugin pinned:
 dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.5
 ```
 
-Run `dsh --version` first if the host version is uncertain. Until the Alpha-compatible npm release exists, use the source install below for Alpha.2 or Alpha.3.
+Run `dsh --version` first if the host version is uncertain. Use the source install below only when testing changes from `main` instead of the published package.
 
 ### Build from source
 

@@ -28,13 +28,12 @@ host entry fails before Web startup because
 | Harness host | Supported plugin line | Evidence |
 | --- | --- | --- |
 | `0.1.1-rc.2` | `@nanmicoder/dsh-auto-mode@0.1.5` | Exact public install, Web cold start and real Headless Auto flow passed. |
-| `0.1.2-alpha.2` | Next release from `main` | Packaged Web/Headless install, real API, native macOS sandbox and human-style Web UI passed. |
-| `0.1.2-alpha.3` | Next release from `main` | Packaged Web/Headless install, real API, Auto tool execution, human-style Web UI and reload persistence passed. |
+| `0.1.2-alpha.2` | `@nanmicoder/dsh-auto-mode@0.1.6` | Packaged Web/Headless install, real API, native macOS sandbox and human-style Web UI passed. |
+| `0.1.2-alpha.3` | `@nanmicoder/dsh-auto-mode@0.1.6` | Packaged Web/Headless install, real API, Auto tool execution, human-style Web UI and reload persistence passed. |
 
-The next release declares the Alpha peer range beginning at
-`^0.1.2-alpha.2`. Users retaining Harness `0.1.1-rc.2` should retain the exact
-published plugin `0.1.5`; installing the plugin's `latest` is reserved for the
-Alpha host line after the compatible release is published. Updating this
+Plugin `0.1.6` declares the Alpha peer range beginning at `^0.1.2-alpha.2`.
+Users retaining Harness `0.1.1-rc.2` should retain the exact published plugin
+`0.1.5`; the plugin's `latest` is for the tested Alpha host line. Updating this
 repository or the plugin package does not update a separately installed or
 embedded Harness host.
 

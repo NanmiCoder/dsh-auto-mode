@@ -27,12 +27,12 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 > 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
 
 > [!IMPORTANT]
-> 当前 `main` 和下一个发布版本面向 **DeepSeek Harness 0.1.2-alpha.2 和 0.1.2-alpha.3**。目前已经发布的插件 `0.1.5` 属于旧 Harness `0.1.1-rc.2` 版本线，在两个已测试的 Alpha 宿主上都会加载失败。继续使用该 RC 宿主时请精确固定插件 `0.1.5`；Alpha 兼容版本发布后，Alpha 用户应安装插件当时的 `latest`。升级本插件不会自动升级实际运行的 Harness 宿主。
+> 插件 `0.1.6` 面向 **DeepSeek Harness 0.1.2-alpha.2 和 0.1.2-alpha.3**。插件 `0.1.5` 属于旧 Harness `0.1.1-rc.2` 版本线，在两个已测试的 Alpha 宿主上都会加载失败。继续使用该 RC 宿主时请精确固定插件 `0.1.5`；Alpha 用户应安装插件 `0.1.6` 或当前 `latest`。升级本插件不会自动升级实际运行的 Harness 宿主。
 
 | Harness 宿主 | 插件 | 状态 |
 | --- | --- | --- |
-| `0.1.2-alpha.2` | 当前 `main`；下一个发布版本 | 已通过打包安装、真实 API、macOS 沙箱和 Web UI 验收。 |
-| `0.1.2-alpha.3` | 当前 `main`；下一个发布版本 | 已通过 Web/Headless 打包安装、冷启动、真实 API、Auto 工具调用、Web UI 与刷新持久化验收。 |
+| `0.1.2-alpha.2` | `0.1.6` | 已通过打包安装、真实 API、macOS 沙箱和 Web UI 验收。 |
+| `0.1.2-alpha.3` | `0.1.6` | 已通过 Web/Headless 打包安装、冷启动、真实 API、Auto 工具调用、Web UI 与刷新持久化验收。 |
 | `0.1.1-rc.2` | `0.1.5` | 已通过官方包精确安装、Web 冷启动和真实 Auto API 流程；保留 RC 宿主时精确固定这个插件版本。 |
 | 其他宿主版本 | 固定当前已知可用的插件版本 | 安装成功本身不代表 API 兼容。 |
 
@@ -40,7 +40,7 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 
 ### npm
 
-Harness `0.1.2-alpha.2` 或 `0.1.2-alpha.3` 用户请在 Alpha 兼容插件发布后安装最新版本：
+Harness `0.1.2-alpha.2` 或 `0.1.2-alpha.3` 用户请安装当前 Alpha 兼容插件：
 
 ```sh
 dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
@@ -52,7 +52,7 @@ dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
 dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.5
 ```
 
-不确定宿主版本时先运行 `dsh --version`。在 Alpha 兼容 npm 版本发布前，Alpha.2 或 Alpha.3 用户请按下面的源码方式安装。
+不确定宿主版本时先运行 `dsh --version`。只有需要测试 `main` 中尚未发布的修改时，才使用下面的源码安装方式。
 
 ### 从源码构建
 
