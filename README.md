@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm version"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--alpha.2-202724" alt="Current main targets DeepSeek Harness 0.1.2-alpha.2">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-alpha.2%20%7C%20alpha.3-202724" alt="Current main is tested with DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3">
 </p>
 
 ## Why Auto?
@@ -27,31 +27,32 @@ Coding agents need broad access to build, test, and inspect a project without st
 > Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
 
 > [!IMPORTANT]
-> The current `main` branch and its next release target **DeepSeek Harness 0.1.2-alpha.2**. Published plugin `0.1.5` targets the older Harness `0.1.0-rc.6` API and cannot be used on Alpha.2. Keep `0.1.5` pinned while staying on that RC host; after the Alpha.2-compatible release is published, Alpha.2 users should install the plugin's current `latest`. Updating the plugin does not update the Harness instance that is actually running.
+> The current `main` branch and its next release target **DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3**. The currently published plugin `0.1.5` belongs to the older Harness `0.1.1-rc.2` line and fails to load on both tested Alpha hosts. Keep plugin `0.1.5` pinned while staying on that RC host. After the Alpha-compatible release is published, Alpha users should install the plugin's current `latest`. Updating this plugin does not update the Harness host that is actually running.
 
 | Harness host | Plugin | Status |
 | --- | --- | --- |
 | `0.1.2-alpha.2` | Current `main`; next release | Passed packaged install, real API, macOS sandbox, and Web UI acceptance. |
-| `0.1.0-rc.6` | `0.1.5` | Previous tested pair; pin this exact plugin version while retaining the RC host. |
+| `0.1.2-alpha.3` | Current `main`; next release | Passed packaged Web and Headless install, cold start, real API, Auto tool execution, Web UI, and reload persistence. |
+| `0.1.1-rc.2` | `0.1.5` | Passed exact public install, Web cold start, and a real Auto API flow. Pin this exact plugin version while retaining the RC host. |
 | Other host versions | Keep a known-working exact plugin version | Not implied compatible by package installation alone. |
 
-See the [Alpha.2 compatibility record](./docs/alpha2-compatibility.md) and [acceptance report](./docs/alpha2-acceptance.md) for the migration surface, evidence, and validation boundary.
+See the [Alpha compatibility record](./docs/alpha2-compatibility.md) and [acceptance report](./docs/alpha2-acceptance.md) for the migration surface, evidence, and validation boundary.
 
 ### npm
 
-For Harness `0.1.2-alpha.2`, after the Alpha.2-compatible plugin release is published:
+For Harness `0.1.2-alpha.2` or `0.1.2-alpha.3`, after the Alpha-compatible plugin release is published:
 
 ```sh
-dsh plugin --profile web add @nanmicoder/dsh-auto-mode@latest
+dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
 ```
 
-For the old Harness `0.1.0-rc.6`, keep the last compatible plugin pinned:
+For the old Harness `0.1.1-rc.2`, keep the last compatible plugin pinned:
 
 ```sh
-dsh plugin --profile web add @nanmicoder/dsh-auto-mode@0.1.5
+dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.5
 ```
 
-Until the Alpha.2-compatible npm release exists, use the source install below for Alpha.2.
+Run `dsh --version` first if the host version is uncertain. Until the Alpha-compatible npm release exists, use the source install below for Alpha.2 or Alpha.3.
 
 ### Build from source
 
