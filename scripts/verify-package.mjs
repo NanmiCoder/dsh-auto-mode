@@ -14,8 +14,8 @@ if (manifest.publishConfig?.access !== 'public' || manifest.publishConfig?.regis
 if (!patch.includes("name: '@nanmicoder/dsh-auto-mode'")) {
   throw new Error('cordis.patch.yml must resolve the scoped npm package name')
 }
-if (manifest.scripts?.prepublishOnly !== 'pnpm verify' || manifest.scripts?.prepare !== undefined) {
-  throw new Error('npm release lifecycle scripts are missing or Git prepare is still enabled')
+if (manifest.scripts?.prepublishOnly !== 'pnpm verify' || manifest.scripts?.prepare !== 'npm run build') {
+  throw new Error('npm release or Git preparation lifecycle scripts are missing')
 }
 for (const peer of Object.keys(manifest.peerDependencies ?? {})) {
   if (manifest.peerDependenciesMeta?.[peer]?.optional !== true) {
@@ -33,7 +33,7 @@ if (manifest.exports?.['./client']?.default !== './lib/client.js'
 if (manifest.dsh?.bundle?.patch !== './cordis.patch.yml') {
   throw new Error('bundle patch declaration is missing or incorrect')
 }
-for (const path of ['./lib/index.js', './lib/index.d.ts', './lib/client.js', './lib/client.js.map', './lib/client/index.d.ts', './assets/readme/hero.svg', './docs/alpha2-compatibility.md', './docs/alpha2-acceptance.md', './cordis.patch.yml', './README.md', './README_ZH.md', './DESIGN.md']) {
+for (const path of ['./lib/index.js', './lib/index.d.ts', './lib/client.js', './lib/client.js.map', './lib/client/index.d.ts', './assets/readme/hero.svg', './docs/alpha2-compatibility.md', './docs/alpha2-acceptance.md', './cordis.patch.yml', './README.md', './README_ZH.md', './DESIGN.md', './compatibility.json']) {
   await access(resolve(root, path))
 }
 for (const entry of ['lib', 'assets/readme/hero.svg', 'docs', 'cordis.patch.yml', 'README.md', 'README_ZH.md', 'DESIGN.md']) {

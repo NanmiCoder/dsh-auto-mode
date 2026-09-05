@@ -115,6 +115,9 @@ async function createWindowsHarness(userMessage: string | ((outside: string) => 
       id: sessionId,
       header: { version: 0, id: sessionId, createdAt: 0, cwd: workspace },
       events,
+      get seq() { return events.length },
+      eventAt(index: number) { return events[index] === undefined ? undefined : { ...events[index], seq: index } },
+      snapshotEvents(from = 0, to = events.length) { return events.slice(from, to) },
       requestHeader: () => ({ config: { provider: 'mock-provider', model: 'mock-model' } }),
       append(type: string, data: Record<string, unknown>) {
         const event = { type, data }
@@ -157,7 +160,7 @@ describe.skipIf(!nativeWindowsPwsh)('Auto business flows through the real Window
       `$values | ForEach-Object { $_ * 2 } | Set-Content -LiteralPath ${pwshQuote(target)}`,
     ].join('; '))
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(target, 'utf8')).toMatch(/2\r?\n4\r?\n6/)
     expect(harness.classifierCalls).toEqual([])
   }, 60_000)
@@ -180,7 +183,7 @@ describe.skipIf(!nativeWindowsPwsh)('Auto business flows through the real Window
       { escalate: true },
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(target, 'utf8')).toBe('approved')
     expect(harness.classifierCalls).toHaveLength(1)
     expect(harness.events.filter(event => event.type === 'approval/asked')).toHaveLength(1)
@@ -196,7 +199,7 @@ describe.skipIf(!nativeWindowsPwsh)('Auto business flows through the real Window
       { escalate: true },
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(target, 'utf8')).toBe('ready')
     expect(harness.classifierCalls[0]?.filesystemEffects).toEqual([
       { kind: 'create-or-overwrite', path: target.toLowerCase(), existedBefore: false },

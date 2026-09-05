@@ -1,0 +1,2 @@
+# Preserve the pinned upstream bytes on Windows checkouts as well as POSIX.
+skills/** text eol=lf

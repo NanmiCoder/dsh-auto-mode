@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm version"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-alpha.2%20%7C%20alpha.3-202724" alt="Current main is tested with DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--rc.1-202724" alt="See installation instructions for exact host compatibility">
 </p>
 
 ## Why Auto?
@@ -19,40 +19,28 @@ Coding agents need broad access to build, test, and inspect a project without st
 `dsh-auto-mode` adds the missing middle ground. Routine project work runs directly inside the official `workspace-write` sandbox, only semantic risks outside that boundary are classified using the current DSH model and the direct user's instructions, genuine ambiguity asks once, and destructive access to critical paths is denied before execution.
 
 > [!IMPORTANT]
-> This plugin does not implement a sandbox. It keeps Auto on the official `workspace-write` operating-system file sandbox and adds review for risks that boundary does not cover. The file sandbox does not restrict reads, network access, or external services; the Windows backend reports `partial` enforcement.
+> Plugin `0.1.7` supports the exact Harness versions below. The recommended host is `0.1.2-rc.1`, which remains a host prerelease. Updating the plugin does not upgrade the running host. Mixed DSH dependency cohorts are unsupported.
 
-## Install
-
-> [!NOTE]
-> Requires an existing [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation.
-
-> [!IMPORTANT]
-> Plugin `0.1.6` targets **DeepSeek Harness 0.1.2-alpha.2 and 0.1.2-alpha.3**. Plugin `0.1.5` belongs to the older Harness `0.1.1-rc.2` line and fails to load on both tested Alpha hosts. Keep plugin `0.1.5` pinned while staying on that RC host; Alpha users should install plugin `0.1.6` or the current `latest`. Updating this plugin does not update the Harness host that is actually running.
-
-| Harness host | Plugin | Status |
+| Harness host | Plugin | Pair |
 | --- | --- | --- |
-| `0.1.2-alpha.2` | `0.1.6` | Passed packaged install, real API, macOS sandbox, and Web UI acceptance. |
-| `0.1.2-alpha.3` | `0.1.6` | Passed packaged Web and Headless install, cold start, real API, Auto tool execution, Web UI, and reload persistence. |
-| `0.1.1-rc.2` | `0.1.5` | Passed exact public install, Web cold start, and a real Auto API flow. Pin this exact plugin version while retaining the RC host. |
-| Other host versions | Keep a known-working exact plugin version | Not implied compatible by package installation alone. |
+| `0.1.2-rc.1` | `0.1.7` | Recommended |
+| `0.1.2-alpha.5` | `0.1.7` | Compatible |
+| `0.1.2-alpha.3` | `0.1.7` | Retained compatibility |
+| `0.1.2-alpha.2` | `0.1.7` | Retained compatibility |
+| `0.1.1-rc.2` | Historical `0.1.5` | Unsupported by `0.1.6`/`0.1.7`; migrate to a pair above for redundant sandbox recovery |
+| Other versions | Undeclared | Require full host validation first |
 
-See the [Alpha compatibility record](./docs/alpha2-compatibility.md) and [acceptance report](./docs/alpha2-acceptance.md) for the migration surface, evidence, and validation boundary.
+[compatibility.json](./compatibility.json) defines the exact matrix. See the [maintenance record](./docs/maintenance-2026-09-06/README.md) for diagnosis, migration and fixes, and the [historical Alpha acceptance report](./docs/alpha2-acceptance.md) for earlier evidence.
 
 ### npm
 
-For Harness `0.1.2-alpha.2` or `0.1.2-alpha.3`, install the current Alpha-compatible plugin:
+Check the actually running `dsh --version`, then install the exact plugin:
 
 ```sh
-dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
+dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.7
 ```
 
-For the old Harness `0.1.1-rc.2`, keep the last compatible plugin pinned:
-
-```sh
-dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.5
-```
-
-Run `dsh --version` first if the host version is uncertain. Use the source install below only when testing changes from `main` instead of the published package.
+`latest` carries stable plugin releases; `next` carries plugin prereleases. Neither tag implies arbitrary host compatibility. Git source installs build through `prepare` and require development dependencies and enabled install scripts. Registry packages already contain compiled output.
 
 ### Build from source
 
@@ -118,6 +106,9 @@ Routine npm, pnpm, yarn, bun, pip, and local Cargo installation runs inside the 
 When the task clearly requires an outside write, the Agent may retry through the official `sandbox_permissions: danger-full-access` plus `justification` contract. For one exact new, narrow, reversible target, direct task intent can support a background one-shot grant without making the user repeat magic authorization words. Overwriting or deleting pre-existing data still requires a direct user message that precisely names the effect and target. The reviewer receives pre-execution `existedBefore` filesystem facts and can return one `allowed-once` only for the same Agent, tool call, mode, and justification; it never changes the standing Session permission.
 
 Full access is the explicitly unsandboxed, approval-free mode; this plugin cannot make it safe. Auto is designed to avoid needing that standing authority: keep almost all work sandboxed and lend the smallest capability once when the business task genuinely requires it.
+
+
+Ordinary calls should omit `sandbox_permissions` and `justification`. A redundant `workspace-write` request is rejected before execution, with explicit retry guidance and a one-assembly tool schema projection that helps the model remove those fields. Standing permissions remain unchanged. Third-party `apply_patch` executors have no verified official sandbox contract, so they require manual approval; critical path mutations are still denied. Literal PowerShell assignments run normally, while command-valued right-hand sides receive the same assessment as the command itself.
 
 ## Sub-agents, Workflow, and Goal
 

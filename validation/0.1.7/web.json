@@ -1,0 +1,25 @@
+{
+  "autoAfterReload": true,
+  "iconAfterReload": true,
+  "confirmed": true,
+  "idle": true,
+  "targetRemoved": true,
+  "classifierRequested": true,
+  "realUsage": true,
+  "noProviderError": true,
+  "requests": 5,
+  "workspace": "/tmp",
+  "host": "0.1.2-rc.1",
+  "artifactSha256": "5fb401e32d5cc362d396d4998ae7dd9afb12641ebf5c91eb65c5cef610751173",
+  "clientBundleSha256": "8d819f5983c62e8cfde06aa146ff6250495212dbc4436fad9afc43f370bec62a",
+  "identicalClientBundleAdditionalChecks": {
+    "cancelKeptWorkspace": true,
+    "menuChineseAndIcon": true,
+    "acknowledgementRequired": true,
+    "realFileBytes": "AUTO_WEB_OK",
+    "autoAfterReload": true,
+    "iconAfterReload": "trigger",
+    "marker": true,
+    "englishMenuAndSettings": true
+  }
+}

@@ -29,7 +29,7 @@ export interface HttpClassifierConfig {
   readonly fetchImpl?: typeof fetch
 }
 
-const CONTENT_KEY_TERMS = new Set(['body', 'content', 'data', 'diff', 'patch', 'payload', 'str', 'string', 'text'])
+const CONTENT_KEY_TERMS = new Set(['body', 'content', 'data', 'diff', 'input', 'patch', 'payload', 'str', 'string', 'text'])
 const ALWAYS_REDACTED_TEXT_KEYS = new Set(['description', 'justification'])
 const SECRET_KEYS = /(?:api|auth|access|secret|private|credential|password|token|cookie|authorization).*?(?:key|value|token)?$/i
 
@@ -49,6 +49,9 @@ function isBulkContentKey(key: string): boolean {
 /** Redact likely secrets and bound one classifier-visible text value. */
 export function sanitizeClassifierText(value: string): string {
   return value
+    .replace(/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|$)/g, '[redacted-secret]')
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[redacted-secret]')
+    .replace(/\bgh[opusr]_[A-Za-z0-9_]{8,}\b/g, '[redacted-secret]')
     .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/g, '[redacted-secret]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/gi, 'Bearer [redacted-secret]')
     .replace(/((?:api[_-]?key|token|secret|password)=)[^&\s]+/gi, '$1[redacted-secret]')

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "kind": "real-harness-product-entry-with-deterministic-fixture",
+  "realApi": false,
+  "pluginVersion": "0.1.7",
+  "artifactSha256": "5fb401e32d5cc362d396d4998ae7dd9afb12641ebf5c91eb65c5cef610751173",
+  "workspace": "/tmp (existing workspace; /private/tmp is the macOS alias)",
+  "doctorRegressionTests": {
+    "passed": 7,
+    "failed": 0
+  },
+  "scriptSha256": {
+    "scripts/harness-doctor.mjs": "0fbf26906b0ed790032536296a9c6a8c8e96215703caf704f0a61848dc5a6bb1",
+    "scripts/harness-runtime-verify.mjs": "24e1699b16ce55807a5a85d4d5723e0db2dd8c7f3b39e62413ffcacf3ef60d76",
+    "scripts/harness-doctor.test.mjs": "d1f76a5f954ec9cd948aed05d1d0c35e9bb0599f3cee2093d1bbff0fa3306cd0",
+    "scripts/fixtures/harness-runtime-llm.mjs": "ab6d02759fafa9503c28946f1356cf5d54851fc5691475f2f7cb519ab0633e47"
+  },
+  "matrix": [
+    {
+      "hostVersion": "0.1.2-alpha.2",
+      "passed": true,
+      "assertions": 22,
+      "cohortPackages": 215,
+      "artifactFilesCompared": 69,
+      "nodeVersion": "v24.20.0",
+      "platform": "darwin",
+      "reportSha256": "ca317daaf8e997c65edc7f8f129cc05915131ba2f2ca622496811f0968ce85b7"
+    },
+    {
+      "hostVersion": "0.1.2-alpha.3",
+      "passed": true,
+      "assertions": 22,
+      "cohortPackages": 215,
+      "artifactFilesCompared": 69,
+      "nodeVersion": "v24.20.0",
+      "platform": "darwin",
+      "reportSha256": "cbb610c75cf5ad62a46b00241ec0ee84fd42f96f85853a5a74bc253b0fa44b55"
+    },
+    {
+      "hostVersion": "0.1.2-alpha.5",
+      "passed": true,
+      "assertions": 22,
+      "cohortPackages": 214,
+      "artifactFilesCompared": 69,
+      "nodeVersion": "v24.20.0",
+      "platform": "darwin",
+      "reportSha256": "51d9012a62e726342799eccb7601a932e030a5bef1b50dc470b2955fa3cf563c"
+    },
+    {
+      "hostVersion": "0.1.2-rc.1",
+      "passed": true,
+      "assertions": 22,
+      "cohortPackages": 214,
+      "artifactFilesCompared": 69,
+      "nodeVersion": "v24.20.0",
+      "platform": "darwin",
+      "reportSha256": "3560ee495a497ea6737d148a4935d79987f33d552e87f9c094840aa864723106"
+    }
+  ],
+  "coverage": [
+    "coherent full DSH cohort and resolved peer identity",
+    "all packaged regular file hashes",
+    "actual service and Session class identities in the launched process",
+    "ordinary Bash and field-less retry with temporary schema projection",
+    "native classifier allow/deny/ask and exact one-shot approval audit",
+    "three classifier failures followed by explicit manual approval",
+    "hard denial leaves synthetic protected canary unchanged",
+    "real child session inherits Auto; child cannot widen permissions",
+    "side effects verified outside the model; normal exit and no remaining process group"
+  ],
+  "unverified": [
+    "real provider APIs (separate acceptance required)",
+    "browser interactions",
+    "PowerShell and Windows sandbox",
+    "live user-data migrations"
+  ]
+}

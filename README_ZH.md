@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nanmicoder/dsh-auto-mode"><img src="https://img.shields.io/npm/v/@nanmicoder/dsh-auto-mode.svg" alt="npm 版本"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@nanmicoder/dsh-auto-mode.svg" alt="MIT 许可证"></a>
-  <img src="https://img.shields.io/badge/DeepSeek%20Harness-alpha.2%20%7C%20alpha.3-202724" alt="当前 main 已在 DeepSeek Harness 0.1.2-alpha.2 和 0.1.2-alpha.3 上实测">
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--rc.1-202724" alt="精确宿主兼容矩阵见安装说明">
 </p>
 
 ## 为什么需要 Auto？
@@ -19,40 +19,28 @@ Coding Agent 需要足够大的权限才能持续构建、测试和检查项目�
 `dsh-auto-mode` 补上了中间层。日常项目操作直接在官方 `workspace-write` 沙箱内执行；沙箱覆盖不了的语义风险才结合当前 DSH 模型与用户原话分类；真正不明确的动作只询问一次；破坏关键路径的操作则在执行前直接拒绝。
 
 > [!IMPORTANT]
-> 本插件不自行实现沙箱，而是让 Auto 常驻官方 `workspace-write` 操作系统文件沙箱，并补充其未覆盖的语义风险。文件沙箱不限制读取、网络和外部服务；Windows 后端为 `partial`。
+> 插件 `0.1.7` 支持下表中的精确 Harness 版本。推荐 `0.1.2-rc.1`；宿主仍为预发布版本。升级插件不会升级正在运行的宿主，混装 DSH 依赖也不属于受支持配置。
 
-## 安装
-
-> [!NOTE]
-> 使用前请确保已安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)。
-
-> [!IMPORTANT]
-> 插件 `0.1.6` 面向 **DeepSeek Harness 0.1.2-alpha.2 和 0.1.2-alpha.3**。插件 `0.1.5` 属于旧 Harness `0.1.1-rc.2` 版本线，在两个已测试的 Alpha 宿主上都会加载失败。继续使用该 RC 宿主时请精确固定插件 `0.1.5`；Alpha 用户应安装插件 `0.1.6` 或当前 `latest`。升级本插件不会自动升级实际运行的 Harness 宿主。
-
-| Harness 宿主 | 插件 | 状态 |
+| Harness 宿主 | 插件 | 配对 |
 | --- | --- | --- |
-| `0.1.2-alpha.2` | `0.1.6` | 已通过打包安装、真实 API、macOS 沙箱和 Web UI 验收。 |
-| `0.1.2-alpha.3` | `0.1.6` | 已通过 Web/Headless 打包安装、冷启动、真实 API、Auto 工具调用、Web UI 与刷新持久化验收。 |
-| `0.1.1-rc.2` | `0.1.5` | 已通过官方包精确安装、Web 冷启动和真实 Auto API 流程；保留 RC 宿主时精确固定这个插件版本。 |
-| 其他宿主版本 | 固定当前已知可用的插件版本 | 安装成功本身不代表 API 兼容。 |
+| `0.1.2-rc.1` | `0.1.7` | 推荐 |
+| `0.1.2-alpha.5` | `0.1.7` | 兼容 |
+| `0.1.2-alpha.3` | `0.1.7` | 保留兼容 |
+| `0.1.2-alpha.2` | `0.1.7` | 保留兼容 |
+| `0.1.1-rc.2` | 历史版本 `0.1.5` | 不支持 `0.1.6`/`0.1.7`；旧版冗余沙箱参数问题请迁移上述配对 |
+| 其他版本 | 未声明 | 需先通过完整宿主验证 |
 
-迁移范围、证据和验证边界见 [Alpha 兼容记录](./docs/alpha2-compatibility.md)与[验收报告](./docs/alpha2-acceptance.md)。
+精确版本由 [compatibility.json](./compatibility.json) 管理。诊断、迁移和本次修复见 [维护记录](./docs/maintenance-2026-09-06/README.md)。历史验证见 [Alpha 验收报告](./docs/alpha2-acceptance.md)。
 
 ### npm
 
-Harness `0.1.2-alpha.2` 或 `0.1.2-alpha.3` 用户请安装当前 Alpha 兼容插件：
+先确认实际启动的 `dsh --version`，然后安装精确插件版本：
 
 ```sh
-dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@latest
+dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.7
 ```
 
-继续使用旧 Harness `0.1.1-rc.2` 时，请固定最后一个兼容插件版本：
-
-```sh
-dsh plugin --profile web add --save-exact @nanmicoder/dsh-auto-mode@0.1.5
-```
-
-不确定宿主版本时先运行 `dsh --version`。只有需要测试 `main` 中尚未发布的修改时，才使用下面的源码安装方式。
+`latest` 发布稳定插件版本，`next` 发布预发布插件版本；标签不代表任意宿主兼容。Git 源码安装会通过 `prepare` 自动构建，需要开发依赖和启用安装脚本；普通 npm 包已包含编译产物。
 
 ### 从源码构建
 
@@ -118,6 +106,9 @@ Session 产物包括 Shell 重定向、任意成功的 Shell 工具与项目脚�
 当任务明确需要写到工作区外时，Agent 可用官方 `sandbox_permissions: danger-full-access` + `justification` 重试。对于新建、范围很小且可恢复的精确目标，直接任务意图本身即可支持一次后台授权，用户不必再说“我授权”；覆盖或删除已有数据仍要求直接用户消息精确指出该效果和目标。Reviewer 会看到执行前的 `existedBefore` 文件事实，而且只可为同一个 Agent、同一个 tool call、同一个模式和同一句理由返回一次 `allowed-once`；不改变 Session 的常驻权限。
 
 Full access 是用户明确选择的无沙箱、免审批模式，插件不能把它变安全。Auto 的设计目标不是“在完全权限下猜哪些命令安全”，而是让绝大多数任务保留常驻沙箱，仅在业务确实需要时借出一次最小权限。
+
+
+普通工具调用应省略 `sandbox_permissions` 和 `justification`。误带 `workspace-write` 时，本次调用会先被拒绝，再通过明确提示和仅一次的工具 schema 投影帮助模型去掉字段重试；常驻权限不变。第三方 `apply_patch` 的执行器没有经过官方沙箱契约验证，始终保留人工审批，关键路径修改仍直接拒绝。PowerShell 字面量赋值可正常运行；命令型 RHS 与原命令采用相同评估。
 
 ## Sub-agent、Workflow 与 Goal
 
