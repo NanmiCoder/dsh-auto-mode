@@ -14,6 +14,7 @@ const AUTO_DESCRIPTIONS = new Set([en['preset.description'], zh['preset.descript
 const PERMISSION_LABEL_SETS = [
   ['Read Only', 'Workspace Write', 'Full access'],
   ['仅可查看', '可写入工作区', '完全权限'],
+  ['仅可查看', '工作区内修改', '完全权限'],
 ] as const
 const PERMISSION_ROW_TITLES = new Set(['Permission', '权限'])
 

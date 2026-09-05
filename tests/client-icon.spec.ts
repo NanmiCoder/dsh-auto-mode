@@ -24,6 +24,25 @@ afterEach(() => {
 })
 
 describe('Auto permission icon decorator', () => {
+  it('recognizes the RC.1 Chinese workspace label and requires acknowledgement', () => {
+    document.body.innerHTML = `<div role="menu">
+      <button role="menuitem">仅可查看</button>
+      <button role="menuitem">工作区内修改</button>
+      <button role="menuitem">Auto</button>
+      <button role="menuitem">完全权限</button>
+    </div>`
+    const auto = document.querySelectorAll<HTMLButtonElement>('button')[2]!
+    let selections = 0
+    auto.addEventListener('click', () => { selections += 1 })
+    const dispose = installAutoPermissionIcon(document, translate(zh))
+    try {
+      expect(auto.textContent).toBe('自动审批')
+      expect(auto.dataset.dshAutoModeIcon).toBe('menu')
+      auto.click()
+      expect(selections).toBe(0)
+      expect(document.querySelector('[data-dsh-auto-mode-risk-dialog]')).not.toBeNull()
+    } finally { dispose() }
+  })
   it('marks only Auto inside a complete permission menu and the active access trigger', () => {
     document.body.innerHTML = `
       ${permissionMenu()}

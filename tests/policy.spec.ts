@@ -8,6 +8,17 @@ const roots = resolveRoots('/work/repo', { home: '/home/dev', dshHome: '/safe/ds
 const execution = (name: string, args: unknown) => ({ name, arguments: args, token: Symbol(name) }) as ToolExecution
 
 describe('tool policy', () => {
+  it('does not fast-path opaque patch mutations or protected patch destinations', () => {
+    const artifacts = new ArtifactRegistry()
+    const patch = '*** Begin Patch\n*** Delete File: /safe/dsh/settings.yaml\n*** End Patch'
+    expect(hardDenyReason(execution('apply_patch', { input: patch }), roots)).toMatch(/DSH_HOME/)
+    expect(assessTool(execution('apply_patch', { input: 'unparseable patch' }), roots, artifacts)).toMatchObject({ decision: 'ask', classifierEligible: false })
+  })
+
+  it('blocks encoded credential URL parameters without matching unrelated key names', () => {
+    expect(hardDenyReason(execution('web_fetch', { url: 'https://example.invalid/?access%5Ftoken=abcdefgh12345678' }), roots)).toMatch(/credential/)
+    expect(hardDenyReason(execution('web_fetch', { url: 'https://example.invalid/?design=publicdocumentation' }), roots)).toBeUndefined()
+  })
   it('allows project reads and edits', () => {
     const artifacts = new ArtifactRegistry()
     expect(assessTool(execution('read', { file_path: 'src/a.ts' }), roots, artifacts).decision).toBe('allow')

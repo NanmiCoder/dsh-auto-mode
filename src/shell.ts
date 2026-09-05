@@ -26,6 +26,8 @@ export interface CommandWord {
   readonly glob: boolean
   /** Whether the word was written with quoting or escaping. */
   readonly quoted: boolean
+  /** Whether the whole word is quoted, without unquoted command-name fragments. */
+  readonly fullyQuoted?: boolean
 }
 
 /** One statically separated command inside a Bash or PowerShell command line. */
@@ -132,12 +134,13 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
   let dynamic = false
   let glob = false
   let quoted = false
+  let unquoted = false
   let quote: 'single' | 'double' | undefined
   let pending: 'write' | 'read' | undefined
 
   const flushWord = (): void => {
     if (!started) return
-    const word: CommandWord = { text, dynamic, glob, quoted }
+    const word: CommandWord = { text, dynamic, glob, quoted, fullyQuoted: quoted && !unquoted }
     if (pending === 'write') writeTargets.push(word)
     else if (pending === 'read') readTargets.push(word)
     else words.push(word)
@@ -147,6 +150,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
     dynamic = false
     glob = false
     quoted = false
+    unquoted = false
   }
   const flushSegment = (): void => {
     flushWord()
@@ -232,6 +236,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
       text += next
       started = true
       quoted = true
+      unquoted = true
       continue
     }
     if (char === '`') {
@@ -245,6 +250,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
       text += expansion
       started = true
       dynamic = true
+      unquoted = true
       index += expansion.length - 1
       continue
     }
@@ -304,6 +310,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
       // inspection impossible. Other braces remain opaque.
       text = '{}'
       started = true
+      unquoted = true
       index += 1
       continue
     }
@@ -313,6 +320,7 @@ export function decomposeCommandLine(source: string, shell: ShellKind): ShellDec
     }
     text += char
     started = true
+    unquoted = true
   }
 
   if (quote !== undefined) return opaque('the command line ends inside an unbalanced quote')
@@ -499,22 +507,71 @@ function unwrapCommand(words: readonly CommandWord[]): UnwrappedCommand {
 interface NestedExecution {
   /** Inline source is visible to the independent classifier. */
   readonly source?: string
+  /** The source word itself depends on an outer-shell expansion. */
+  readonly dynamicSource?: boolean
+}
+
+const SCRIPT_EXTENSIONS: Readonly<Record<string, RegExp>> = {
+  node: /\.(?:[cm]?js|[cm]?ts)$/i,
+  deno: /\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/i,
+  bun: /\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/i,
+  python: /\.py$/i, python3: /\.py$/i, perl: /\.pl$/i, ruby: /\.rb$/i,
+  php: /\.php$/i, osascript: /\.(?:scpt|applescript)$/i,
+  sh: /\.sh$/i, bash: /\.(?:sh|bash)$/i, zsh: /\.(?:sh|zsh)$/i,
+  fish: /\.fish$/i, ksh: /\.(?:sh|ksh)$/i, dash: /\.sh$/i,
+  cmd: /\.(?:cmd|bat)$/i, powershell: /\.ps1$/i, pwsh: /\.ps1$/i,
+}
+
+/** Only explicit script modes end interpreter-option parsing before user arguments. */
+function literalScriptInvocation(name: string, words: readonly CommandWord[]): boolean {
+  const extension = SCRIPT_EXTENSIONS[name]
+  // cmd parses a command string rather than a positional script-file boundary.
+  if (extension === undefined || name === 'cmd') return false
+  let index = 1
+  if (name === 'pwsh' || name === 'powershell') {
+    while (words[index] !== undefined && !words[index]?.dynamic && !words[index]?.glob
+      && /^-(?:noprofile|nologo|noninteractive)$/i.test(words[index]?.text ?? '')) index += 1
+    if (/^-file$/i.test(words[index]?.text ?? '')) index += 1
+  } else if ((name === 'deno' || name === 'bun') && words[index]?.text === 'run') {
+    index += 1
+  } else if (name === 'node' && words[index]?.text === '--test') {
+    index += 1
+  } else if (words[index]?.text === '--') index += 1
+  const file = words[index]
+  return file !== undefined && !file.dynamic && !file.glob && !file.text.startsWith('-') && extension.test(file.text)
+}
+
+function inlineSource(word: CommandWord | undefined, source = word?.text): NestedExecution {
+  return word === undefined || source === undefined
+    ? {}
+    : { source, dynamicSource: word.dynamic || word.glob }
 }
 
 /** Describe an interpreter boundary and whether its inline source is visible. */
 function nestedExecution(name: string, words: readonly CommandWord[]): NestedExecution | undefined {
-  if (['node', 'deno', 'bun', 'python', 'python3', 'perl', 'ruby', 'php', 'osascript'].includes(name)) {
-    const index = words.findIndex((word, wordIndex) => wordIndex > 0 && /^(?:-c|-e|-E|--eval|--exec|--command|--print)$/.test(word.text))
-    if (index >= 0) return { ...(words[index + 1] === undefined ? {} : { source: (words[index + 1] as CommandWord).text }) }
-    if (words.length === 1 || words.some((word, wordIndex) => wordIndex > 0 && word.text === '-')) return {}
-    return undefined
-  }
-  if (['sh', 'bash', 'zsh', 'fish', 'ksh', 'dash', 'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(name)) {
-    const index = words.findIndex((word, wordIndex) => wordIndex > 0 && /^(?:-c|\/c|--command)$/.test(word.text))
-    return { ...(index < 0 || words[index + 1] === undefined ? {} : { source: (words[index + 1] as CommandWord).text }) }
+  const interpreter = name.replace(/\.exe$/i, '')
+  if (Object.hasOwn(SCRIPT_EXTENSIONS, interpreter)) {
+    if (interpreter === 'bun' && words.length === 2 && words[1]?.text === 'install') return undefined
+    if (interpreter === 'node' && words.length === 2 && words[1]?.text === '--test') return undefined
+    if (literalScriptInvocation(interpreter, words) || versionProbe(words)
+      || (words.length === 2 && /^(?:--version|--help)$/.test(words[1]?.text ?? ''))) return undefined
+    const shell = ['sh', 'bash', 'zsh', 'fish', 'ksh', 'dash', 'cmd', 'powershell', 'pwsh'].includes(interpreter)
+    const inlineFlag = shell ? /^(?:-c|\/c|--?command)$/i : /^(?:-c|-e|-E|--eval|--exec|--command|--print)$/
+    for (let index = 1; index < words.length; index += 1) {
+      const word = words[index] as CommandWord
+      if (inlineFlag.test(word.text)) return inlineSource(words[index + 1])
+      const attached = /^(--(?:eval|exec|command|print))=(.*)$/.exec(word.text)
+      if (attached !== null && inlineFlag.test(attached[1] as string)) return inlineSource(word, attached[2])
+    }
+    // Abbreviated, combined, encoded and future options are opaque. Do not
+    // guess which following word is code or let them fall through to allow.
+    return {}
   }
   if (['eval', 'iex', 'invoke-expression'].includes(name)) {
-    return { ...(words.length < 2 ? {} : { source: words.slice(1).map(word => word.text).join(' ') }) }
+    return words.length < 2 ? {} : {
+      source: words.slice(1).map(word => word.text).join(' '),
+      dynamicSource: words.slice(1).some(word => word.dynamic || word.glob),
+    }
   }
   if (['exec', 'source', '.', 'invoke-command', 'start-process'].includes(name)) return {}
   return undefined
@@ -696,6 +753,10 @@ function segmentHardDenyReason(segment: ShellSegment, shell: ShellKind, roots: P
     const reason = hardDestructiveTargetReason(globRoot(target.text), roots)
     if (reason !== undefined) return `redirection overwrites ${reason}`
   }
+  const assignment = shell === 'pwsh' ? pwshAssignment(segment.words) : undefined
+  if (assignment !== undefined && !isLiteralAssignmentRhs(assignment.rhs)) {
+    return segmentHardDenyReason({ ...segment, words: assignment.rhs }, shell, roots)
+  }
   const unwrapped = unwrapCommand(segment.words)
   const name = commandName(unwrapped.words[0]?.text ?? '')
   if (name === 'find' && findHasDestructiveAction(unwrapped.words)) {
@@ -752,6 +813,41 @@ export function hardDenyShellReason(source: string, shell: ShellKind, roots: Pol
   return undefined
 }
 
+/**
+ * Recognize a PowerShell assignment target before the dynamic-executable rule
+ * (original false positive reported in PR #3). Only complete quoted strings,
+ * numbers and ordinary variable values are non-executing RHS expressions.
+ * Bare or partly quoted command names must retain normal command assessment.
+ * No dataflow is inferred: a later `Remove-Item $x` still has a hidden target.
+ */
+const PWSH_VARIABLE = /^\$(?:(?:env|global|script|local|using|private):)?[A-Za-z_][A-Za-z0-9_]*$/i
+
+function pwshAssignment(words: readonly CommandWord[]): { rhs: readonly CommandWord[] } | undefined {
+  const first = words[0]
+  const second = words[1]
+  if (first === undefined || second === undefined) return undefined
+  if (!first.dynamic || first.quoted || !PWSH_VARIABLE.test(first.text)) return undefined
+  if (second.text !== '=' || second.dynamic || second.glob || second.quoted) return undefined
+  return { rhs: words.slice(2) }
+}
+
+function isLiteralAssignmentRhs(rhs: readonly CommandWord[]): boolean {
+  if (rhs.length !== 1) return false
+  const word = rhs[0] as CommandWord
+  if (word.glob) return false
+  // Dynamic words are literal only for PowerShell value literals ($null/$true/
+  // $false) and UNQUOTED bare variable references — both execute nothing. A
+  // quoted dynamic word is an interpolation context and must stay out of the
+  // allow path (`"$y"` could equally have been `"$(cmd)"`, which the parse
+  // already routes to opaque, but the classification stays conservative).
+  if (word.dynamic) {
+    if (word.quoted) return false
+    return /^\$(?:null|true|false)$/i.test(word.text) || (!/^\$env:/i.test(word.text) && PWSH_VARIABLE.test(word.text))
+  }
+  return word.fullyQuoted === true
+    || (!word.quoted && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(word.text))
+}
+
 /** Classify one segment of an already hard-deny-cleared command line. */
 function assessSegment(
   segment: ShellSegment,
@@ -761,6 +857,19 @@ function assessSegment(
   owner: object | undefined,
 ): Assessment {
   if (segment.words.length === 0) return semanticReview('redirection without a command requires semantic review')
+  const assignment = shell === 'pwsh' ? pwshAssignment(segment.words) : undefined
+  if (assignment !== undefined) {
+    const rhs = assignment.rhs
+    if (rhs.length === 0) return semanticReview('PowerShell assignment has no value')
+    const value = rhs.length === 1 ? rhs[0] : undefined
+    if (value?.dynamic && (/\$\{?env:/i.test(value.text) || sensitiveReadMarker(value.text))) {
+      return semanticReview('PowerShell assignment reads potentially sensitive credential or environment data')
+    }
+    if (isLiteralAssignmentRhs(rhs)) {
+      return assessRedirections(allowed('PowerShell literal or variable value assignment'), segment, shell, roots)
+    }
+    return assessSegment({ ...segment, words: rhs }, shell, roots, artifacts, owner)
+  }
   const unwrapped = unwrapCommand(segment.words)
   const first = unwrapped.words[0] as CommandWord
   if (first.dynamic || first.glob) {
@@ -771,18 +880,26 @@ function assessSegment(
   const name = commandName((words[0] as CommandWord).text)
   const nested = nestedExecution(name, words)
   if (nested !== undefined) {
-    if (routineInlineProbe(name, nested.source)) return allowed('routine inline package or version probe')
-    if (nested.source === undefined
-      && (words.length === 1 || words.some(word => /^(?:-|--?|\/)?(?:encodedcommand|enc)$/i.test(word.text) || word.text === '-'))) {
+    if (nested.dynamicSource || (nested.source === undefined && words.some(word => word.dynamic || word.glob))) {
+      return denied('interpreter source is produced dynamically; rewrite it with visible code before Auto can review it')
+    }
+    if (routineInlineProbe(name, nested.source)) {
+      return assessRedirections(allowed('routine inline package or version probe'), segment, shell, roots)
+    }
+    if (nested.source === undefined) {
       return semanticReview('opaque interpreter input requires semantic review because its network and read effects are not sandboxed')
     }
     if (nested.source !== undefined && destructiveNestedSource(nested.source)) {
       return denied('nested deletion must be rewritten as a visible command with literal targets before Auto can review it')
     }
-    return allowed('nested or inline code remains confined by the workspace-write sandbox')
+    return assessRedirections(allowed('nested or inline code remains confined by the workspace-write sandbox'), segment, shell, roots)
   }
 
   const base = classifyEffectiveCommand(name, words, segment, shell, roots, artifacts, owner, unwrapped.dynamicInput)
+  return assessRedirections(base, segment, shell, roots)
+}
+
+function assessRedirections(base: Assessment, segment: ShellSegment, shell: ShellKind, roots: PolicyRoots): Assessment {
   if (base.decision !== 'allow') return base
   const staticWritePaths = segment.writeTargets
     .filter(target => !target.dynamic && !isNullSink(target, shell))

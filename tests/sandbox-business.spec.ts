@@ -150,6 +150,9 @@ async function createBusinessHarness(userMessage: string | ((paths: BusinessPath
       id: sessionId,
       header: { version: 0, id: sessionId, createdAt: 0, cwd: workspace },
       events,
+      get seq() { return events.length },
+      eventAt(index: number) { return events[index] === undefined ? undefined : { ...events[index], seq: index } },
+      snapshotEvents(from = 0, to = events.length) { return events.slice(from, to) },
       requestHeader: () => ({ config: { provider: 'mock-provider', model: 'mock-model' } }),
       append(type: string, data: Record<string, unknown>) {
         const event = { type, data }
@@ -202,7 +205,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       `awk 'BEGIN { print "business-ok" }' > ${shellQuote(output)} && test -s ${shellQuote(output)}`,
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(output, 'utf8')).toBe('business-ok\n')
     expect(harness.classifierCalls).toEqual([])
   })
@@ -301,7 +304,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       'find dist -type f -print | sort',
     ].join(' && '))
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(JSON.parse(await readFile(join(harness.workspace, 'dist', 'report.json'), 'utf8'))).toEqual({ orders: 60, billing: 21 })
     expect(await readFile(join(harness.workspace, 'dist', 'summary.csv'), 'utf8')).toBe('orders,billing\n60,21\n')
     expect(harness.classifierCalls).toEqual([])
@@ -318,7 +321,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       'git commit -m "Initial fixture"',
     ].join(' && '))
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: harness.workspace, encoding: 'utf8' }).stdout.trim()).toBe('1')
     expect(harness.classifierCalls).toEqual([])
   })
@@ -345,7 +348,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       `pnpm add --allow-build=dsh-auto-fixture-dependency --store-dir ${shellQuote(join(harness.workspace, '.pnpm-store'))} ${shellQuote(tarball)}`,
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(result.value).toMatchObject({ exitCode: 0 })
     expect(await readFile(join(harness.workspace, 'node_modules', 'dsh-auto-fixture-dependency', 'postinstall-ran.txt'), 'utf8'))
       .toBe('lifecycle-ok')
@@ -379,7 +382,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       )
       await receivedRequest
 
-      expect(result.isError).toBe(false)
+      expect(result.isError, result.isError ? result.error.message : '').toBe(false)
       expect(JSON.parse(received)).toEqual({ status: 'ready', total: 81 })
       expect(harness.classifierCalls).toHaveLength(1)
       expect(harness.classifierCalls[0]?.policyReason).toMatch(/network transmission|remote mutation/)
@@ -397,7 +400,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       { escalate: true },
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(target, 'utf8')).toBe('release-ready')
     expect(harness.classifierCalls).toHaveLength(1)
     expect(harness.events.find(event => event.type === 'approval/decided')?.data).toMatchObject({ outcome: 'allowed-once' })
@@ -505,7 +508,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
     await writeFile(join(sibling, 'keep.txt'), 'keep')
     const result = await harness.run('authorized-existing-delete', `rm -rf ${shellQuote(target)}`)
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(existsSync(target)).toBe(false)
     expect(await readFile(join(sibling, 'keep.txt'), 'utf8')).toBe('keep')
     expect(harness.classifierCalls).toHaveLength(1)
@@ -542,7 +545,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       { escalate: true },
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(existsSync(target)).toBe(false)
     expect(await readFile(join(sibling, 'keep.txt'), 'utf8')).toBe('keep')
     expect(harness.classifierCalls).toHaveLength(1)
@@ -569,7 +572,7 @@ describe.skipIf(!realSandboxAvailable)('Auto business flows through the real mac
       { escalate: true },
     )
 
-    expect(result.isError).toBe(false)
+    expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(await readFile(target, 'utf8')).toBe('approved')
     expect(harness.classifierCalls).toHaveLength(1)
     expect(harness.classifierCalls[0]?.sandboxRequest).toMatchObject({

@@ -1,0 +1,24 @@
+{
+  "version": "0.1.7",
+  "artifactSha256": "5fb401e32d5cc362d396d4998ae7dd9afb12641ebf5c91eb65c5cef610751173",
+  "node": "24.20.0",
+  "npm": "11.19.0",
+  "verifiedAt": "2026-09-05T19:34:06.226023+00:00",
+  "realApiPassed": true,
+  "realApiProvider": "deepseek-official",
+  "realApiModel": "deepseek-v4-flash",
+  "workspace": "/tmp",
+  "realApiRequests": 81,
+  "supportedHosts": [
+    "0.1.2-rc.1",
+    "0.1.2-alpha.5",
+    "0.1.2-alpha.3",
+    "0.1.2-alpha.2"
+  ],
+  "evidence": [
+    "validation/0.1.7/fixture.json",
+    "validation/0.1.7/real-api.json",
+    "validation/0.1.7/web.json"
+  ],
+  "adversarialReview": "reported findings fixed and independently revalidated; see VALIDATION.md for scope"
+}

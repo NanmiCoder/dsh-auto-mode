@@ -14,6 +14,15 @@ const input = {
 }
 
 describe('HTTP classifier', () => {
+  it('redacts credential families in arbitrary fields while retaining bulk-content privacy', () => {
+    const values = ['AKIA' + 'A'.repeat(16), 'ASIA' + 'B'.repeat(16), 'gho_' + 'C'.repeat(36), 'ghu_' + 'D'.repeat(36), '-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----']
+    for (const credential of values) {
+      const result = JSON.stringify(sanitizeClassifierArguments({ nested: { value: credential } }))
+      expect(result).not.toContain(credential)
+      expect(result).toContain('redacted')
+    }
+    expect(JSON.stringify(sanitizeClassifierArguments({ file_text: 'private project source', input: '*** Begin Patch\nprivate source\n*** End Patch' }))).not.toContain('private')
+  })
   it('helps with narrow reversible widening but keeps deletion explicitly scoped', () => {
     expect(CLASSIFIER_SYSTEM_PROMPT).toContain('without magic words such as "authorize"')
     expect(CLASSIFIER_SYSTEM_PROMPT).toContain('only creates new data or is readily reversible')

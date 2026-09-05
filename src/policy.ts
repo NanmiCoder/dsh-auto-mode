@@ -1,6 +1,7 @@
 import { lstatSync } from 'node:fs'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { ArtifactRegistry } from './artifacts.js'
+import { parsePatchEffects, patchGuardPaths, patchPayload, patchPayloadsForGuard } from './patch.js'
 import {
   hardDestructiveTargetReason,
   isProtectedProjectPath,
@@ -41,23 +42,69 @@ function serializedArguments(argumentsValue: unknown): string {
 }
 
 function containsCredentialMaterial(argumentsValue: unknown): boolean {
-  return /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b|Bearer\s+[A-Za-z0-9._~+\/-]{8,}|\.ssh[\\/](?:id_|config)|\.credentials\.yaml)/i
+  return /(?:BEGIN (?:[A-Z]+ )?PRIVATE KEY|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\b(?:sk|gh[opusr]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b|Bearer\s+[A-Za-z0-9._~+\/-]{8,}|\.ssh[\\/](?:id_|config)|\.credentials\.yaml)/i
     .test(serializedArguments(argumentsValue))
 }
 
+function urlContainsCredential(value: string): boolean {
+  try {
+    const url = new URL(value, 'https://relative.invalid')
+    if (url.password) return true
+    return [...url.searchParams].some(([key, value]) => /^(?:token|access_token|api[_-]?key|sig|signature|auth|authorization)$/i.test(key) && value.length >= 8)
+  } catch { return true }
+}
+
 /** One model-requested, tool-native widening of the standing workspace sandbox. */
+export interface SandboxWideningRequest {
+  readonly requestedMode: 'danger-full-access'
+  readonly justification: string
+}
+
+/**
+ * @deprecated Use `SandboxRequestState` / `sandboxRequestState` for new code.
+ * Kept as a compatibility view for consumers of the pre-rc.2 export.
+ */
 export interface SandboxEscalationRequest {
   readonly requestedMode: string
   readonly justification: string
 }
 
-/** Read the official paired sandbox escalation arguments without trusting them as authorization. */
+/** Semantic state of the raw sandbox fields before any authorization decision. */
+export type SandboxRequestState =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'redundant-standing' }
+  | { readonly kind: 'widening'; readonly request: SandboxWideningRequest }
+  | { readonly kind: 'invalid'; readonly requestedMode: unknown }
+
+/** Classify the official sandbox request fields without treating them as authorization. */
+export function sandboxRequestState(argumentsValue: unknown): SandboxRequestState {
+  const args = record(argumentsValue)
+  if (args === undefined || !Object.prototype.hasOwnProperty.call(args, 'sandbox_permissions')) {
+    return { kind: 'absent' }
+  }
+  const requestedMode = args.sandbox_permissions
+  if (typeof requestedMode !== 'string') return { kind: 'invalid', requestedMode }
+  if (requestedMode === 'workspace-write') return { kind: 'redundant-standing' }
+  if (requestedMode === 'danger-full-access') {
+    return {
+      kind: 'widening',
+      request: {
+        requestedMode,
+        justification: typeof args?.justification === 'string' ? args.justification : '',
+      },
+    }
+  }
+  return { kind: 'invalid', requestedMode }
+}
+
+/** Read the legacy paired sandbox fields without treating them as authorization. */
 export function sandboxEscalationRequest(argumentsValue: unknown): SandboxEscalationRequest | undefined {
   const args = record(argumentsValue)
-  if (typeof args?.sandbox_permissions !== 'string') return undefined
+  const requestedMode = args?.sandbox_permissions
+  if (typeof requestedMode !== 'string') return undefined
   return {
-    requestedMode: args.sandbox_permissions,
-    justification: typeof args.justification === 'string' ? args.justification : '',
+    requestedMode,
+    justification: typeof args?.justification === 'string' ? args.justification : '',
   }
 }
 
@@ -136,6 +183,16 @@ export function hardDenyReason(exec: Readonly<ToolExecution>, roots: PolicyRoots
   if ((/^(?:web_fetch|curl|wget)/i.test(exec.name) || EXTERNAL_WRITE_TOOL.test(exec.name)) && containsCredentialMaterial(exec.arguments)) {
     return 'external call contains credential or private-key material'
   }
+  if ((/^(?:web_fetch|curl|wget)/i.test(exec.name) || EXTERNAL_WRITE_TOOL.test(exec.name))
+    && typeof args?.url === 'string' && urlContainsCredential(args.url)) {
+    return 'external URL contains credential material or cannot be safely parsed'
+  }
+  if (exec.name === 'apply_patch') {
+    for (const path of patchPayloadsForGuard(exec.arguments).flatMap(patchGuardPaths)) {
+      const reason = hardDestructiveTargetReason(path, roots)
+      if (reason !== undefined) return `apply_patch targets ${reason}`
+    }
+  }
   if ((exec.name === 'bash' || exec.name === 'pwsh') && typeof args?.command === 'string') {
     return hardDenyShellReason(args.command, exec.name, roots)
   }
@@ -203,6 +260,21 @@ export function assessTool(exec: Readonly<ToolExecution>, roots: PolicyRoots, ar
     }
   }
 
+
+  if (exec.name === 'apply_patch') {
+    const effects = parsePatchEffects(patchPayload(exec.arguments) ?? '')
+    if (effects === undefined) return { decision: 'ask', reason: 'apply_patch targets cannot be fully parsed; explicit review required', classifierEligible: false }
+    const filesystemEffects = effects.map(effect => {
+      const path = normalizePath(effect.path, roots.workspace, roots.home)
+      return { kind: effect.kind, path, existedBefore: existedBefore(path) }
+    })
+    return {
+      decision: 'ask',
+      reason: 'third-party apply_patch execution has no verified Harness filesystem sandbox; explicit approval is required',
+      classifierEligible: false,
+      filesystemEffects,
+    }
+  }
 
   if (exec.name === 'str_replace_editor') {
     const command = args?.command

@@ -1,62 +1,70 @@
 name: Publish Package
-
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       version:
-        description: Package version to publish
+        description: Exact package version (select its existing tag as the ref)
         required: true
         type: string
-
 permissions:
   contents: read
-  id-token: write
-
 concurrency:
-  group: npm-publish-${{ github.ref_name }}
+  group: npm-publish-auto-mode
   cancel-in-progress: false
-
 jobs:
-  publish:
+  metadata:
     if: github.repository == 'NanmiCoder/dsh-auto-mode'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      dist-tag: ${{ steps.release.outputs.dist-tag }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
-
-      - name: Set up package managers
-        run: npm install --global npm@11.19.0 pnpm@10.33.0
-
-      - name: Verify release version
+      - id: release
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+        run: node scripts/release-metadata.mjs --registry-check
+  verify:
+    needs: metadata
+    uses: ./.github/workflows/verify.yml
+  publish:
+    needs: [metadata, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.19.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-candidate
+          path: release
+      - run: cd release && sha256sum --check SHA256SUMS
+      - run: node scripts/verify-release-artifact.mjs release/package.tgz
+      - run: node scripts/release-metadata.mjs --registry-check
+      - name: Publish the matrix-tested artifact
+        env:
+          DIST_TAG: ${{ needs.metadata.outputs.dist-tag }}
+        run: npm publish release/package.tgz --ignore-scripts --provenance --access public --tag "$DIST_TAG"
+      - name: Publish release notes and verified artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          DIST_TAG: ${{ needs.metadata.outputs.dist-tag }}
         shell: bash
         run: |
-          package_version="$(node --print "require('./package.json').version")"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            test "${GITHUB_REF_NAME}" = "v${package_version}"
-          else
-            test "${RELEASE_VERSION}" = "${package_version}"
-          fi
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify package
-        run: pnpm verify
-
-      - name: Verify tarball
-        run: npm pack --dry-run --ignore-scripts
-
-      - name: Publish to npm
-        run: npm publish --ignore-scripts --access public
+          args=()
+          if [[ "$DIST_TAG" == next ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release/package.tgz release/SHA256SUMS --verify-tag --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md "${args[@]}"
