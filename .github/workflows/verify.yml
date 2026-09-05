@@ -76,12 +76,13 @@ jobs:
           name: npm-candidate
           path: release
       - run: cd release && sha256sum --check SHA256SUMS
+      # Ordinary test effects must be inside the existing /tmp workspace.
       - name: Exact host product fixture (no real API credentials)
-        run: node scripts/harness-runtime-verify.mjs --host-version '${{ matrix.host }}' --artifact release/package.tgz --out '${{ runner.temp }}/auto-runtime-${{ matrix.host }}'
+        run: node scripts/harness-runtime-verify.mjs --host-version '${{ matrix.host }}' --artifact release/package.tgz --out '/tmp/auto-runtime-${{ matrix.host }}'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: harness-evidence-${{ matrix.host }}
           path: |
-            ${{ runner.temp }}/auto-runtime-${{ matrix.host }}/*.json
+            /tmp/auto-runtime-${{ matrix.host }}/*.json
           if-no-files-found: warn
