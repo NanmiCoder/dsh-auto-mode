@@ -116,7 +116,7 @@ export function inspectHarness({ runtime, profile, artifactRoot, artifact, expec
     if (existsSync(compatibilityPath) && !readJson(compatibilityPath).supportedHosts?.some(host => host.version === version)) issues.push({ code: 'PLUGIN_HOST_NOT_SUPPORTED', version })
     if (artifact) {
       const compared = []
-      const entries = execFileSync('tar', ['-tzf', resolve(artifact)], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).split('\n').filter(Boolean)
+      const entries = execFileSync('tar', ['-tzf', resolve(artifact)], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean)
       if (!entries.every(path => path.startsWith('package/') && !path.split('/').includes('..'))) throw Error('Artifact contains an invalid package path')
       const files = new Set(entries.filter(path => !path.endsWith('/')).map(path => path.slice('package/'.length)))
       function checkExtra(directory, prefix = '') {

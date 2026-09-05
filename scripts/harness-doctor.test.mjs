@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, unlinkSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import childProcess, { execFileSync } from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
 import { inspectHarness, PLUGIN } from './harness-doctor.mjs'
 
 const version = '0.1.2-rc.1'
@@ -79,4 +80,20 @@ test('requires a profile version for provider package inventory', t => {
   const path = join(state.profile, 'package.json'), manifest = JSON.parse(readFileSync(path, 'utf8'))
   delete manifest.version; json(path, manifest)
   assert.ok(inspectHarness(state).issues.some(issue => issue.code === 'PROFILE_VERSION_MISSING'))
+})
+
+test('verifies the actual artifact with Windows tar CRLF listing output', t => {
+  const state = fixture(t)
+  const original = childProcess.execFileSync
+  const mock = t.mock.method(childProcess, 'execFileSync', (command, args, options) => {
+    const output = original(command, args, options)
+    return command === 'tar' && args[0] === '-tzf'
+      ? output.replace(/\r?\n/g, '\r\n')
+      : output
+  })
+  syncBuiltinESMExports()
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports() })
+  const report = inspectHarness(state)
+  assert.equal(report.passed, true, JSON.stringify(report.issues))
+  assert.equal(report.artifact.compared.length, 6)
 })

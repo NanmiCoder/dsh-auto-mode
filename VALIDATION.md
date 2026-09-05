@@ -1,6 +1,6 @@
 # 0.1.7 pre-commit acceptance
 
-All results below were obtained before committing the implementation. The npm candidate was built with Node **24.20.0** and npm **11.19.0**. Its SHA-256 is:
+Production and real API acceptance completed before committing the implementation. Diagnostic and CI fixes were separately reproduced and verified before their commits; the final fixture results below include those fixes. The npm candidate was built with Node **24.20.0** and npm **11.19.0**. Its SHA-256 is:
 
 `5fb401e32d5cc362d396d4998ae7dd9afb12641ebf5c91eb65c5cef610751173`
 
@@ -8,7 +8,7 @@ All results below were obtained before committing the implementation. The npm ca
 
 - `pnpm verify`: **190 passed**, five Windows-only tests skipped on macOS; typecheck, server/client build and package contract passed.
 - Maintenance contract: four exact host versions and 99 unchanged upstream skill files verified.
-- Doctor: **6 tests passed**, including mixed versions, duplicate identities, nested copies, modified module bytes, extra modules and profile metadata.
+- Doctor: **7 tests passed**, including mixed versions, duplicate identities, nested copies, modified module bytes, extra modules, profile metadata and Windows tar CRLF output.
 - Official CLI product fixture: **22 assertions per host**, with all 69 packaged files matched against the same tarball. Alpha.2/Alpha.3 cohorts contain 215 DSH packages; Alpha.5/RC.1 contain 214. Runtime services and actual Session objects share the expected module identity. The model in this suite is explicitly a deterministic fixture.
 - Git source installation without `lib` successfully ran `prepare`, built both entries, and installed; a clean tarball consumer installed prebuilt entries without a build. The unbuilt control reproduced missing-entry failure.
 - Release metadata probes: 13 passed. Artifact gate probes: 6 passed. Actions syntax validated with actionlint.

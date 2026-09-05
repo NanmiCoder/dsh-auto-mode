@@ -107,7 +107,7 @@ try {
   const version = initial.host.version
   const extracted = join(reportDir, 'extracted')
   mkdirSync(extracted)
-  const entries = execFileSync('tar', ['-tzf', artifactCopy], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }).split('\n').filter(Boolean)
+  const entries = execFileSync('tar', ['-tzf', artifactCopy], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean)
   if (!entries.every(path => path.startsWith('package/') && !path.split('/').includes('..'))) throw Error('Artifact contains a path outside package/')
   execFileSync('tar', ['-xzf', artifactCopy, '-C', extracted])
   const artifactRoot = join(extracted, 'package')
