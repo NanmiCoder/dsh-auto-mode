@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_call:
+    inputs:
+      source-ref:
+        description: Exact source commit selected by release metadata
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -16,6 +21,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -32,6 +39,8 @@ jobs:
       hosts: ${{ steps.matrix.outputs.hosts }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -67,6 +76,8 @@ jobs:
         host: ${{ fromJSON(needs.package.outputs.hosts) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'

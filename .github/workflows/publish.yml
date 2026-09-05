@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact package version (select its existing tag as the ref)
+        description: Retry the current accepted version from its existing immutable tag
         required: true
         type: string
 permissions:
@@ -20,12 +20,16 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       dist-tag: ${{ steps.release.outputs.dist-tag }}
+      source-sha: ${{ steps.release.outputs.source-sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           package-manager-cache: false
+      - run: node --test scripts/release-metadata.test.mjs
       - id: release
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -33,6 +37,8 @@ jobs:
   verify:
     needs: metadata
     uses: ./.github/workflows/verify.yml
+    with:
+      source-ref: ${{ needs.metadata.outputs.source-sha }}
   publish:
     needs: [metadata, verify]
     runs-on: ubuntu-latest
@@ -41,6 +47,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -54,10 +62,13 @@ jobs:
       - run: cd release && sha256sum --check SHA256SUMS
       - run: node scripts/verify-release-artifact.mjs release/package.tgz
       - run: node scripts/release-metadata.mjs --registry-check
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ needs.metadata.outputs.source-sha }}
       - name: Publish the matrix-tested artifact
         env:
           DIST_TAG: ${{ needs.metadata.outputs.dist-tag }}
-        run: npm publish release/package.tgz --ignore-scripts --provenance --access public --tag "$DIST_TAG"
+        run: npm publish ./release/package.tgz --ignore-scripts --provenance --access public --tag "$DIST_TAG"
       - name: Publish release notes and verified artifact
         env:
           GH_TOKEN: ${{ github.token }}
