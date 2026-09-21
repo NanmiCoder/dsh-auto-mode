@@ -22,11 +22,11 @@ flowchart TD
 
 [中文安装与配置指南](jev-quickstart.zh-CN.md)
 
-These changes are on `codex/jev-classifier-provider`, not the published npm package. Jev real-API acceptance used Harness **0.1.5-rc.1**; the base plugin's older compatibility matrix is not additional Jev runtime evidence. Keep your existing coding-model account configured.
+These changes are on `experiment/jev-provider`, not the published npm package. Jev real-API acceptance used Harness **0.1.5-rc.1**; the base plugin's older compatibility matrix is not additional Jev runtime evidence. Keep your existing coding-model account configured.
 
 ```sh
 dsh --version
-git clone --branch codex/jev-classifier-provider --single-branch https://github.com/NanmiCoder/dsh-auto-mode.git dsh-auto-mode-jev
+git clone --branch experiment/jev-provider --single-branch https://github.com/NanmiCoder/dsh-auto-mode.git dsh-auto-mode-jev
 cd dsh-auto-mode-jev
 pnpm install --frozen-lockfile
 pnpm build

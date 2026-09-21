@@ -10,7 +10,7 @@
 
 ```sh
 dsh --version
-git clone --branch codex/jev-classifier-provider --single-branch https://github.com/NanmiCoder/dsh-auto-mode.git dsh-auto-mode-jev
+git clone --branch experiment/jev-provider --single-branch https://github.com/NanmiCoder/dsh-auto-mode.git dsh-auto-mode-jev
 cd dsh-auto-mode-jev
 pnpm install --frozen-lockfile
 pnpm build

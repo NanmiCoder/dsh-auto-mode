@@ -13,7 +13,7 @@
 </p>
 
 > [!NOTE]
-> **Jev 实验分支：`codex/jev-classifier-provider`。** 默认仍使用 Harness 原来的模型。体验 Jev 请按[独立安装与配置指南](docs/jev-quickstart.zh-CN.md)构建这个分支；下方 npm 安装命令不会安装此分支。官方和 OpenRouter 已在 Harness `0.1.5-rc.1` 真实调用验证，Vercel 因账号账单验证要求尚未完成推理验证。实测收益与限制见 [Docker benchmark 报告](docs/jev-docker-benchmark-2026-09-21.md)。
+> **Jev 实验分支：`experiment/jev-provider`。** 默认仍使用 Harness 原来的模型。体验 Jev 请按[独立安装与配置指南](docs/jev-quickstart.zh-CN.md)构建这个分支；下方 npm 安装命令不会安装此分支。官方和 OpenRouter 已在 Harness `0.1.5-rc.1` 真实调用验证，Vercel 因账号账单验证要求尚未完成推理验证。实测收益与限制见 [Docker benchmark 报告](docs/jev-docker-benchmark-2026-09-21.md)。
 
 ## 为什么需要 Auto？
 

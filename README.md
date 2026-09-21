@@ -13,7 +13,7 @@
 </p>
 
 > [!NOTE]
-> **Jev experimental branch: `codex/jev-classifier-provider`.** Default behavior still uses your Harness model. To try Jev, build this branch using the [installation and configuration guide](docs/jev-provider.md) ([中文指南](docs/jev-quickstart.zh-CN.md)); the npm installation below does not install this branch. Official and OpenRouter calls were tested on Harness `0.1.5-rc.1`; Vercel inference remains unverified because the account requires billing verification. Read the [Docker benchmark results and limitations](docs/jev-docker-benchmark-2026-09-21.md) before evaluating the option.
+> **Jev experimental branch: `experiment/jev-provider`.** Default behavior still uses your Harness model. To try Jev, build this branch using the [installation and configuration guide](docs/jev-provider.md) ([中文指南](docs/jev-quickstart.zh-CN.md)); the npm installation below does not install this branch. Official and OpenRouter calls were tested on Harness `0.1.5-rc.1`; Vercel inference remains unverified because the account requires billing verification. Read the [Docker benchmark results and limitations](docs/jev-docker-benchmark-2026-09-21.md) before evaluating the option.
 
 ## Why Auto?
 
