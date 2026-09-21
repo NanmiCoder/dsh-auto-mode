@@ -7,6 +7,7 @@ import type { PreToolDecision, ToolExecution, ToolExecutionResult } from '@deeps
 import { ArtifactRegistry } from './artifacts.js'
 import { createHttpClassifier, sanitizeClassifierArguments, sanitizeClassifierText } from './classifier.js'
 import { createDshClassifier } from './dsh-classifier.js'
+import { createJevClassifier, JEV_PROVIDERS, type JevProvider } from './jev-classifier.js'
 import { AutoApprovalGrants } from './escalation.js'
 import { assertHarnessCompatibility, sessionEventsNewestFirst } from './harness-compat.js'
 import { resolveRoots, type RootOptions } from './paths.js'
@@ -16,6 +17,7 @@ import type { SafetyClassifier } from './types.js'
 export { ArtifactRegistry } from './artifacts.js'
 export { createHttpClassifier, sanitizeClassifierArguments, type HttpClassifierConfig } from './classifier.js'
 export { createDshClassifier, type DshClassifierConfig } from './dsh-classifier.js'
+export { createJevClassifier, JEV_PROVIDERS, type JevClassifierConfig, type JevProvider } from './jev-classifier.js'
 export { AutoApprovalGrants } from './escalation.js'
 export * from './paths.js'
 export * from './policy.js'
@@ -57,6 +59,9 @@ export interface Config {
   readonly dshHome?: string
   readonly tempRoots?: string[]
   readonly classifierEndpoint?: string
+  readonly classifierBackend?: 'harness' | 'http' | 'jev'
+  readonly jevProvider?: JevProvider
+  readonly jevMinAllowProbability?: number
   readonly classifierProvider?: string
   readonly classifierModel?: string
   readonly classifierApiKeyEnv?: string
@@ -70,9 +75,12 @@ export const Config: z<Config> = z.object({
   dshHome: z.string(),
   tempRoots: z.array(z.string()),
   classifierEndpoint: z.string(),
+  classifierBackend: z.union(['harness', 'http', 'jev']),
+  jevProvider: z.union(['typesafe', 'openrouter', 'vercel']),
+  jevMinAllowProbability: z.number().default(0.9),
   classifierProvider: z.string(),
   classifierModel: z.string(),
-  classifierApiKeyEnv: z.string().default('DEEPSEEK_API_KEY'),
+  classifierApiKeyEnv: z.string(),
   classifierTimeoutMs: z.number().default(30_000),
   classifierMaxOutputTokens: z.number().default(1_024),
 })
@@ -148,7 +156,25 @@ function classifierFrom(ctx: Context, config: Config): SafetyClassifier {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 4_096) {
     throw new Error('classifierMaxOutputTokens must be an integer between 64 and 4096')
   }
-  if (config.classifierEndpoint === undefined || config.classifierEndpoint.trim() === '') {
+  const backend = config.classifierBackend ?? (config.classifierEndpoint?.trim() ? 'http' : 'harness')
+  if (!['harness', 'http', 'jev'].includes(backend)) throw new Error('invalid classifierBackend')
+  if (backend === 'jev') {
+    const provider = config.jevProvider ?? 'typesafe'
+    const defaults = JEV_PROVIDERS[provider]
+    if (!defaults) throw new Error('invalid jevProvider')
+    if (config.classifierProvider !== undefined) throw new Error('Use jevProvider for Jev; classifierProvider selects a Harness route')
+    const envName = config.classifierApiKeyEnv ?? defaults.apiKeyEnv
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new Error('classifierApiKeyEnv must be an environment-variable name')
+    return createJevClassifier({
+      provider, apiKey: process.env[envName] ?? '', timeoutMs,
+      ...(config.classifierEndpoint === undefined ? {} : { endpoint: config.classifierEndpoint }),
+      ...(config.classifierModel === undefined ? {} : { model: config.classifierModel }),
+      ...(config.jevMinAllowProbability === undefined ? {} : { minAllowProbability: config.jevMinAllowProbability }),
+    })
+  }
+  if (config.jevProvider !== undefined) throw new Error('jevProvider requires classifierBackend: jev')
+  if (backend === 'harness') {
+    if (config.classifierEndpoint?.trim()) throw new Error('classifierEndpoint cannot be used with classifierBackend: harness')
     return createDshClassifier(ctx.llm, {
       timeoutMs,
       maxOutputTokens,
@@ -156,6 +182,7 @@ function classifierFrom(ctx: Context, config: Config): SafetyClassifier {
       ...(config.classifierModel === undefined ? {} : { model: config.classifierModel }),
     })
   }
+  if (!config.classifierEndpoint?.trim()) throw new Error('classifierEndpoint is required for classifierBackend: http')
   const endpoint = new URL(config.classifierEndpoint)
   const loopback = ['localhost', '127.0.0.1', '::1'].includes(endpoint.hostname)
   if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && loopback)) {

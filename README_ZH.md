@@ -12,6 +12,9 @@
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.5--rc.1-202724" alt="精确宿主兼容矩阵见安装说明">
 </p>
 
+> [!NOTE]
+> **Jev 实验分支：`codex/jev-classifier-provider`。** 默认仍使用 Harness 原来的模型。体验 Jev 请按[独立安装与配置指南](docs/jev-quickstart.zh-CN.md)构建这个分支；下方 npm 安装命令不会安装此分支。官方和 OpenRouter 已在 Harness `0.1.5-rc.1` 真实调用验证，Vercel 因账号账单验证要求尚未完成推理验证。实测收益与限制见 [Docker benchmark 报告](docs/jev-docker-benchmark-2026-09-21.md)。
+
 ## 为什么需要 Auto？
 
 Coding Agent 需要足够大的权限才能持续构建、测试和检查项目，但 DeepSeek Harness 当前的选择很尖锐：受限模式会频繁打断正常开发，Full access 又完全取消审批。
@@ -129,6 +132,8 @@ Full access 是用户明确选择的无沙箱、免审批模式，插件不能�
     classifierTimeoutMs: 30000
     classifierMaxOutputTokens: 1024
 ```
+
+可选接入 Jev：在上述配置行设置 `classifierBackend: jev`，并将 `jevProvider` 设为 `typesafe`、`openrouter` 或 `vercel`，分别提供 `TYPESAFE_API_KEY`、`OPENROUTER_API_KEY` 或 `AI_GATEWAY_API_KEY` 环境变量。未配置时仍使用 Harness 原来的模型。详见 [Jev 安装与配置指南](docs/jev-quickstart.zh-CN.md)、[适配器设计](docs/jev-provider.md)和 [Docker benchmark](benchmarks/docker-permission/README.md)。
 
 完整决策顺序、威胁模型、Windows 路径处理、分类器载荷限制和官方源码依据见 [DESIGN.md](./DESIGN.md)。
 

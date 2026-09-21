@@ -12,6 +12,9 @@
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-0.1.5--rc.1-202724" alt="See installation instructions for exact host compatibility">
 </p>
 
+> [!NOTE]
+> **Jev experimental branch: `codex/jev-classifier-provider`.** Default behavior still uses your Harness model. To try Jev, build this branch using the [installation and configuration guide](docs/jev-provider.md) ([中文指南](docs/jev-quickstart.zh-CN.md)); the npm installation below does not install this branch. Official and OpenRouter calls were tested on Harness `0.1.5-rc.1`; Vercel inference remains unverified because the account requires billing verification. Read the [Docker benchmark results and limitations](docs/jev-docker-benchmark-2026-09-21.md) before evaluating the option.
+
 ## Why Auto?
 
 Coding agents need broad access to build, test, and inspect a project without stopping every few steps. But DeepSeek Harness currently leaves a sharp choice: restricted modes interrupt normal development, while Full access removes approval entirely.
@@ -129,6 +132,8 @@ No extra endpoint or API key is needed by default. Auto uses the current Session
     classifierTimeoutMs: 30000
     classifierMaxOutputTokens: 1024
 ```
+
+To use Jev instead, set `classifierBackend: jev` and `jevProvider: typesafe`, `openrouter`, or `vercel` in that config row. Supply `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, or `AI_GATEWAY_API_KEY` respectively. The default stays on Harness. See [Jev configuration and decision behavior](docs/jev-provider.md) and [Docker business replay benchmark](benchmarks/docker-permission/README.md).
 
 See [DESIGN.md](./DESIGN.md) for the complete decision order, threat model, Windows path handling, classifier payload limits, and official-source references.
 

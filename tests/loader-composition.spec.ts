@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -20,10 +20,12 @@ afterEach(async () => {
   context = undefined
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 describe('real Cordis Loader composition', () => {
-  it('allows a routine command and blocks danger before the body', async () => {
+  it.each(['harness', 'jev'] as const)('%s allows a routine command and blocks danger before the body', async backend => {
     root = await mkdtemp(join(tmpdir(), 'dsh-auto-mode-loader-'))
     const configPath = join(root, 'cordis.yml')
     await writeFile(configPath, [
@@ -34,6 +36,7 @@ describe('real Cordis Loader composition', () => {
       `    workspaceRoot: ${JSON.stringify(root)}`,
       `    dshHome: ${JSON.stringify(join(root, '.dsh'))}`,
       '    classifierTimeoutMs: 1000',
+      ...(backend === 'jev' ? ['    classifierBackend: jev', '    jevProvider: typesafe', '    classifierApiKeyEnv: AUTO_TEST_JEV_KEY'] : []),
       '',
     ].join('\n'))
 
@@ -41,9 +44,25 @@ describe('real Cordis Loader composition', () => {
     provideTestPermissionPresets(context)
     const agents = new Map<string, NonNullable<ToolExecutionInput['agent']>>()
     const classifierCalls: Array<Record<string, unknown>> = []
+    let nativeCalls = 0
+    if (backend === 'jev') {
+      vi.stubEnv('AUTO_TEST_JEV_KEY', 'fixture-key')
+      vi.stubGlobal('fetch', async (_url: string, options: RequestInit) => {
+        const payload = JSON.parse(options.body as string).state
+        classifierCalls.push(payload)
+        const command = payload.arguments?.command ?? ''
+        const choice = payload.toolName === 'cloud_deploy' || command.includes('git push') ? 'deny' : command.includes('ask.py') ? 'ask' : 'allow'
+        return new Response(command.includes('invalid.py') ? 'not-json' : JSON.stringify({ answers: { permission: {
+          type: 'choice', choice, confidence: 1,
+          probabilities: Object.fromEntries(['allow', 'ask', 'deny'].map(label => [label, label === choice ? 1 : 0])),
+        } } }))
+      })
+    }
     context.provide('agents', { get: (id: string) => agents.get(id) })
     context.provide('llm', {
       stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+        nativeCalls += 1
+        if (backend === 'jev') throw new Error('Jev must not use the Harness classifier route')
         const block = options.messages[0]?.content[0]
         const payload = JSON.parse(block?.type === 'text' ? block.text : '{}') as Record<string, unknown>
         classifierCalls.push(payload)
@@ -217,6 +236,7 @@ describe('real Cordis Loader composition', () => {
     expect(ordinaryPluginBodyCalls).toBe(1)
     expect(riskyPluginBodyCalls).toBe(0)
     expect(classifierCalls).toHaveLength(5)
+    expect(nativeCalls).toBe(backend === 'jev' ? 0 : 5)
     expect(classifierCalls[4]?.trustedUserMessages).toEqual(['Build and test this project.'])
   })
 })

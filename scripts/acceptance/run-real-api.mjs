@@ -40,6 +40,9 @@ symlinkSync(join(extracted, 'package'), join(profile, 'node_modules/@nanmicoder/
 const json = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 json(join(profile, 'package.json'), { name: 'auto-mode-acceptance-profile', version: '0.0.0', private: true, type: 'module', dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', mode === 'web' ? '@deepseek-ai/dsh-web-app' : '@deepseek-ai/dsh-headless', '@nanmicoder/dsh-auto-mode'], patchReload: 'startup' } } });
 const patches = [{ id: 'permission', config: { ...yaml.parse(readFileSync(join(extracted, 'package/cordis.patch.yml'), 'utf8')).find(p => p.id === 'permission').config, defaultPreset: 'auto' } }, { id: 'llm-pi-ai', disabled: true }, { id: 'llm-deepseek', config: providerConfig }, { id: 'agent-default-model', config: route }];
+// Opt-in Jev acceptance. Configuration contains env references, never keys.
+const classifierConfig = process.env.AUTO_ACCEPTANCE_CLASSIFIER_CONFIG ? JSON.parse(readFileSync(process.env.AUTO_ACCEPTANCE_CLASSIFIER_CONFIG, 'utf8')) : undefined;
+if (classifierConfig) patches.push({ id: 'auto-permission-mode', config: classifierConfig });
 if (shell === 'pwsh') patches.push({id:'bash-sandbox',disabled:true},{id:'tool-bash',disabled:true},{id:'pwsh-sandbox',disabled:false},{id:'tool-pwsh',disabled:false});
 // Harness 0.1.5-rc.1 dropped str_replace_editor from the base composition.
 // Mount the official package explicitly so the native-editor scenario still
@@ -57,12 +60,19 @@ if (driverArg) {
 }
 writeFileSync(join(profile, 'cordis.patch.yml'), yaml.stringify(patches));
 const env = { PATH: process.env.PATH, HOME: join(run,'user-home'), TMPDIR: join(run,'tmp'), LANG: 'en_US.UTF-8', DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1', DSH_PERMISSION_MODE: 'workspace-write', DEEPSEEK_API_KEY: key, AUTO_ACCEPTANCE_DIR: run, AUTO_ACCEPTANCE_VERSION: version, AUTO_ACCEPTANCE_SHELL: shell, AUTO_ACCEPTANCE_MODEL: route.model };
+if (process.env.AUTO_ACCEPTANCE_DOCKER_HOST) env.DOCKER_HOST = process.env.AUTO_ACCEPTANCE_DOCKER_HOST;
+if (process.env.AUTO_ACCEPTANCE_BENCHMARK_CONFIG) env.AUTO_ACCEPTANCE_BENCHMARK_CONFIG = resolve(process.env.AUTO_ACCEPTANCE_BENCHMARK_CONFIG);
+if (process.env.AUTO_ACCEPTANCE_SOURCE_ROOT) env.AUTO_ACCEPTANCE_SOURCE_ROOT = resolve(process.env.AUTO_ACCEPTANCE_SOURCE_ROOT);
+if (process.env.AUTO_ACCEPTANCE_JEV_KEY_FILE) env.TYPESAFE_API_KEY = readFileSync(process.env.AUTO_ACCEPTANCE_JEV_KEY_FILE, 'utf8').trim();
+if (classifierConfig?.classifierBackend === 'jev') env.AUTO_ACCEPTANCE_CLASSIFIER_BACKEND = 'jev';
 const args = [join(runtime, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '--profile', mode, ...(mode === 'web' ? ['--port', '0', '--no-open'] : [])];
 const child = spawn(process.execPath, args, { cwd: '/tmp', env, stdio: ['ignore','pipe','pipe'] });
 let output = '', announced = false;
 json(join(run,'identity.json'), { version, plugin: JSON.parse(readFileSync(join(extracted,'package/package.json'))).version, artifactSha256: createHash('sha256').update(readFileSync(artifact)).digest('hex'), node: process.version, runtime, profile, cwd: '/tmp', pid: child.pid, provider: route.provider, model: route.model });
 for (const stream of [child.stdout,child.stderr]) stream.on('data', data => {
-  output += data; writeFileSync(join(run,'host.log'), output.split(key).join('[REDACTED]'), { mode: 0o600 });
+  output += data; let safeOutput = output;
+  for (const secret of [key, env.TYPESAFE_API_KEY].filter(Boolean)) safeOutput = safeOutput.split(secret).join('[REDACTED]');
+  writeFileSync(join(run,'host.log'), safeOutput, { mode: 0o600 });
   const match = output.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/);
   if (match && !announced) { announced = true; writeFileSync(join(run,'startup-url.txt'),match[1],{ mode:0o600 }); const url=new URL(match[1]);url.search='';console.log(JSON.stringify({ ready:true,version,pid:child.pid,run,url:url.href })); }
 });
