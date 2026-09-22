@@ -138,17 +138,36 @@ export function isCriticalPath(target: string, roots: PolicyRoots): boolean {
   return windowsCritical || [...critical, ...credentialRoots].some(root => isWithin(root, normalized))
 }
 
-/** Whether a workspace path is protected metadata rather than ordinary project content. */
+/** Directory names whose contents are project metadata rather than ordinary source. */
+const PROTECTED_METADATA_SEGMENTS = ['.git', '.vscode', '.idea', '.husky', '.dsh']
+/** File names that configure a shell, Git, or MCP client for the whole workspace. */
+const PROTECTED_METADATA_BASENAMES = [
+  '.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.profile', '.mcp.json',
+]
+
+/**
+ * Whether a workspace path is protected metadata rather than ordinary project content.
+ *
+ * Every path segment is checked, not only the first: the workspace filesystem
+ * sandbox deliberately permits writes anywhere inside the workspace, so a
+ * nested `packages/app/.git/hooks/pre-commit` or `.git/config` is a durable
+ * code-execution surface (Git executes hooks, and `core.sshCommand`/`hooksPath`
+ * redirect later commands).
+ *
+ * This predicate only answers "is the path protected"; whether a given shell
+ * verb's operands reach it is the caller's job. Redirection, `mkdir`/`touch`,
+ * `cp`/`mv`, and the file tools are covered in `shell.ts`/`policy.ts`; other
+ * writing verbs (`tee`, `sed -i`, `dd of=`, `truncate`) are not yet.
+ */
 export function isProtectedProjectPath(target: string, roots: PolicyRoots): boolean {
   const normalized = normalizePath(target, roots.workspace, roots.home)
   if (!isWithin(roots.workspace, normalized)) return false
   const style = styleOf(roots.workspace)
   const api = pathApi(style)
   const relative = api.relative(roots.workspace, normalized).replaceAll('\\', '/')
-  const first = relative.split('/')[0]?.toLowerCase()
-  if (first !== undefined && ['.git', '.vscode', '.idea', '.husky', '.dsh'].includes(first)) return true
+  if (relative.split('/').some(segment => PROTECTED_METADATA_SEGMENTS.includes(segment.toLowerCase()))) return true
   const base = api.basename(normalized).toLowerCase()
-  return ['.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.profile', '.mcp.json'].includes(base)
+  return PROTECTED_METADATA_BASENAMES.includes(base)
 }
 
 /** Deterministic destructive-target fuse. */

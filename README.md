@@ -30,7 +30,7 @@ Coding agents need broad access to build, test, and inspect a project without st
 | `0.1.6-alpha.*` | Unsupported | Requires separate adaptation; do not install this plugin |
 | Other versions | Undeclared | Require full host verification first |
 
-Historical Alpha support does not imply support for current or future Alphas. `latest`, `next`, and `alpha` are mutable tags, not compatibility promises. [compatibility.json](./compatibility.json) defines the exact matrix; see [VALIDATION.md](./VALIDATION.md) for acceptance results.
+Historical Alpha support does not imply support for current or future Alphas. `latest`, `next`, and `alpha` are mutable tags, not compatibility promises. [compatibility.json](./compatibility.json) defines the exact matrix; see [VALIDATION.md](./VALIDATION.md) for acceptance results, and the [fork hardening record](./docs/fork-hardening-2026-09-17/README.md) for the fail-open shell fixes carried in this branch.
 
 ### Upgrade and startup recovery
 
