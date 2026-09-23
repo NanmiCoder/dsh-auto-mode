@@ -183,6 +183,17 @@ describe('real Cordis Loader composition', () => {
       callId: ToolCallId('risky-plugin'), name: 'cloud_deploy', arguments: { target: 'production' }, agent: agentFor('auto'), signal: new AbortController().signal,
     })).resolves.toMatchObject({ isError: true })
     await expect(run('root', 'rm -rf /')).resolves.toMatchObject({ isError: true })
+    // This case is denied by the monotonic guard, because the prepended listener
+    // above short-circuits the plugin's own pre-execute hook with `allow`. The guard
+    // must classify the refusal exactly as the hook does, or the model receives a
+    // bare denial with no monotonic-stop notice.
+    const guardedRoot = await run('root-guard-notice', 'rm -rf /')
+    expect(guardedRoot.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('[auto-mode hard deny]') }),
+    ]))
+    expect(guardedRoot.additionalContexts?.[0]).toMatchObject({
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_HARD_DENIAL_RECOVERY_CONTEXT }],
+    })
     await expect(run('ambiguous', 'python script.py')).resolves.toMatchObject({ isError: false })
     await expect(run('classifier-deny', 'git push origin main')).resolves.toMatchObject({ isError: true })
     await expect(run('classifier-ask', 'npx ask.py')).resolves.toMatchObject({ isError: true })
@@ -213,6 +224,11 @@ describe('real Cordis Loader composition', () => {
     expect(childEscalation.content).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('[auto-mode delegated escalation denied]') }),
     ]))
+    // The child gets per-call guidance too: a widening it cannot have must be
+    // reported to the parent rather than reached by another route.
+    expect(childEscalation.additionalContexts?.[0]).toMatchObject({
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_DELEGATED_DENIAL_RECOVERY_CONTEXT }],
+    })
     expect(bodyCalls).toBe(5)
     expect(ordinaryPluginBodyCalls).toBe(1)
     expect(riskyPluginBodyCalls).toBe(0)

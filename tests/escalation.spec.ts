@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import { AutoApprovalGrants } from '../src/escalation.js'
+import { AutoApprovalGrants, AutoRefusalNotices } from '../src/escalation.js'
 
 function execution(agent: object, callId = 'call-1'): ToolExecution {
   return {
@@ -64,5 +64,49 @@ describe('exact Auto sandbox grants', () => {
     })
     grants.settle(exec)
     expect(grants.decide(approval(agent))).toBeUndefined()
+  })
+})
+
+describe('call-scoped refusal notices', () => {
+  it('consumes a recorded class once, per live call', () => {
+    const notices = new AutoRefusalNotices()
+    const agent = {}
+    notices.record(execution(agent), 'escalation')
+
+    expect(notices.consume(execution(agent))).toBe('escalation')
+    // Consumed, so a repeated settle/consume cannot re-attach the notice.
+    expect(notices.consume(execution(agent))).toBeUndefined()
+  })
+
+  it('does not broaden across agent or call id', () => {
+    const notices = new AutoRefusalNotices()
+    const agent = {}
+    notices.record(execution(agent), 'hard')
+
+    expect(notices.consume(execution({}))).toBeUndefined()
+    expect(notices.consume(execution(agent, 'call-2'))).toBeUndefined()
+    expect(notices.consume(execution(agent))).toBe('hard')
+  })
+
+  it('retires a record when the call settles without being read', () => {
+    const notices = new AutoRefusalNotices()
+    const agent = {}
+    const exec = execution(agent)
+    notices.record(exec, 'authority')
+    notices.settle(exec)
+    expect(notices.consume(exec)).toBeUndefined()
+  })
+
+  it('cannot be written or read for a call without an agent or call id', () => {
+    const notices = new AutoRefusalNotices()
+    const agent = {}
+    const anonymous = { name: 'bash', arguments: {}, token: Symbol('t') } as unknown as ToolExecution
+    notices.record(anonymous, 'authority')
+    expect(notices.consume(anonymous)).toBeUndefined()
+
+    const noCallId = { agent, name: 'bash', arguments: {}, token: Symbol('t') } as unknown as ToolExecution
+    notices.record(noCallId, 'authority')
+    expect(notices.consume(noCallId)).toBeUndefined()
+    expect(notices.consume(execution(agent))).toBeUndefined()
   })
 })
