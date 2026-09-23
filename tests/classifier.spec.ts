@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { CLASSIFIER_SYSTEM_PROMPT, createHttpClassifier, parseClassifierDecision, sanitizeClassifierArguments, sanitizeClassifierText } from '../src/classifier.js'
 import { createDshClassifier } from '../src/dsh-classifier.js'
 
@@ -120,7 +120,13 @@ describe('native DSH classifier', () => {
     await expect(classifier.classify(input, new AbortController().signal))
       .resolves.toEqual({ decision: 'allow', reason: 'safe version probe' })
     expect(request).toMatchObject({
-      provider: 'deepseek-official', model: 'deepseek-v4-flash', temperature: 0, maxTokens: 1_024,
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      temperature: 0,
+      maxTokens: 2_048,
+      // The pin is what stops the adapter's advertised `high` defaultEffort from
+      // spending the answer budget on reasoning tokens.
+      reasoningEffort: 'off',
     })
     expect(request?.sessionId).toBeUndefined()
     expect(request?.messages[0]?.content[0]).toMatchObject({ type: 'text' })
@@ -177,5 +183,168 @@ describe('native DSH classifier', () => {
   it('requires provider and model overrides as a pair', () => {
     const runtime = { stream: vi.fn() as unknown as (options: GenerateOptions) => AsyncIterable<StreamChunk> }
     expect(() => createDshClassifier(runtime, { timeoutMs: 1_000, provider: 'deepseek-official' })).toThrow(/together/)
+  })
+})
+
+type FinishReason = Extract<StreamChunk, { type: 'finish' }>['reason']
+
+function reasoningInfo(efforts: readonly string[]): LlmResolvedModelInfo {
+  return { reasoning: { efforts: efforts.map(id => ({ id })) } } as unknown as LlmResolvedModelInfo
+}
+
+interface RuntimeOptions {
+  /** Absent omits the capability probe; null advertises no reasoning; a list advertises those efforts. */
+  readonly efforts?: readonly string[] | null
+  readonly answer: string
+  readonly finish?: FinishReason
+  readonly rejectFirstEffort?: boolean
+}
+
+/** Runtime that records every request and answers with one scripted response. */
+function recordingRuntime(options: RuntimeOptions) {
+  const requests: GenerateOptions[] = []
+  const probe = options.efforts === undefined
+    ? {}
+    : {
+        resolveModelInfo: async () => options.efforts === null
+          ? ({} as unknown as LlmResolvedModelInfo)
+          : reasoningInfo(options.efforts),
+      }
+  const runtime = {
+    ...probe,
+    stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+      requests.push(request)
+      const rejectPin = options.rejectFirstEffort === true && requests.length === 1
+      const { answer } = options
+      const finish: FinishReason = options.finish ?? { kind: 'stop' }
+      return (async function* () {
+        if (rejectPin) {
+          yield {
+            type: 'finish',
+            reason: {
+              kind: 'error',
+              failure: { message: 'DeepSeek does not support reasoning effort "off"', code: 'UNSUPPORTED_REASONING_EFFORT' },
+            },
+          } as const
+          return
+        }
+        yield { type: 'text-delta', index: 0, text: answer } as const
+        yield { type: 'finish', reason: finish } as const
+      })()
+    },
+  }
+  return { runtime, requests }
+}
+
+/**
+ * The reported failure was `finish_reason: "length"` on every classifier call,
+ * because the adapter materializes its advertised `high` defaultEffort whenever
+ * the caller omits one and reasoning tokens then consume the whole answer budget.
+ * These cases pin the effort selection, the answer cap, and the retry.
+ */
+describe('native classifier reasoning budget', () => {
+  it('pins thinking off on a route that advertises the off effort', async () => {
+    const { runtime, requests } = recordingRuntime({
+      efforts: ['off', 'low', 'high', 'max'],
+      answer: '{"decision":"allow","reason":"routine"}',
+    })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.reasoningEffort).toBe('off')
+    expect(requests[0]?.maxTokens).toBe(2_048)
+  })
+
+  it('sends no effort at all to a route that advertises no reasoning support', async () => {
+    const { runtime, requests } = recordingRuntime({ efforts: null, answer: '{"decision":"allow","reason":"routine"}' })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    // An explicit effort would be rejected with UNSUPPORTED_REASONING_EFFORT.
+    expect(requests[0]).not.toHaveProperty('reasoningEffort')
+    expect(requests[0]?.maxTokens).toBe(2_048)
+  })
+
+  it('enlarges the cap for a route that cannot disable thinking', async () => {
+    const { runtime, requests } = recordingRuntime({ efforts: ['low', 'high'], answer: '{"decision":"allow","reason":"routine"}' })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    expect(requests[0]).not.toHaveProperty('reasoningEffort')
+    expect(requests[0]?.maxTokens).toBe(4_096)
+  })
+
+  it('retries once without the pin when the adapter rejects it', async () => {
+    const { runtime, requests } = recordingRuntime({
+      efforts: ['off', 'high'],
+      answer: '{"decision":"allow","reason":"routine"}',
+      rejectFirstEffort: true,
+    })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.reasoningEffort).toBe('off')
+    expect(requests[1]).not.toHaveProperty('reasoningEffort')
+    // The retry inherits the adapter default, so it also buys back the budget.
+    expect(requests[1]?.maxTokens).toBe(4_096)
+  })
+
+  it('does not retry an ordinary provider failure', async () => {
+    const { runtime, requests } = recordingRuntime({
+      efforts: ['off', 'high'],
+      answer: '',
+      finish: { kind: 'error', failure: { message: 'provider offline', code: 'OFFLINE' } },
+    })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .rejects.toThrow('provider offline')
+    // Only UNSUPPORTED_REASONING_EFFORT justifies a second request.
+    expect(requests).toHaveLength(1)
+  })
+
+  it('reserves the reasoning floor for a route that cannot disable thinking', async () => {
+    const { runtime, requests } = recordingRuntime({ efforts: ['low', 'high'], answer: '{"decision":"allow","reason":"routine"}' })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000, maxOutputTokens: 512 })
+      .classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    // A small configured cap cannot starve a call whose reasoning shares it.
+    expect(requests[0]?.maxTokens).toBe(4_096)
+  })
+
+  it('honours an explicitly inherited effort and the configured cap', async () => {
+    const { runtime, requests } = recordingRuntime({ efforts: ['low', 'high'], answer: '{"decision":"allow","reason":"routine"}' })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000, reasoningEffort: '', maxOutputTokens: 512 })
+      .classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason: 'routine' })
+    // Inheriting is an explicit operator choice, so their cap is respected.
+    expect(requests[0]).not.toHaveProperty('reasoningEffort')
+    expect(requests[0]?.maxTokens).toBe(512)
+  })
+
+  it('refuses a truncated response even when it contains a complete object', async () => {
+    // Recovering a decision from a partial answer cannot separate the model's own
+    // conclusion from text it merely quoted out of untrusted input, and no
+    // provenance signal exists to tell those apart. A max-tokens finish therefore
+    // stays the fail-closed denial it has always been.
+    const { runtime } = recordingRuntime({
+      efforts: ['low', 'high'],
+      answer: '{"decision":"allow","reason":"reads a project file"}\nand the rest was cut off',
+      finish: { kind: 'max-tokens' },
+    })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .rejects.toThrow('classifier response reached its output limit')
+  })
+
+  it('refuses a response that is not exactly one object', async () => {
+    const { runtime } = recordingRuntime({
+      efforts: null,
+      answer: 'The call is routine.\n{"decision":"allow","reason":"routine"}\n',
+    })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .rejects.toThrow(/JSON/)
+  })
+
+  it('parses a reason that contains a brace and an escaped quote', async () => {
+    const reason = 'a"}'
+    const { runtime } = recordingRuntime({ efforts: null, answer: JSON.stringify({ decision: 'allow', reason }) })
+    await expect(createDshClassifier(runtime, { timeoutMs: 1_000 }).classify(input, new AbortController().signal))
+      .resolves.toEqual({ decision: 'allow', reason })
   })
 })

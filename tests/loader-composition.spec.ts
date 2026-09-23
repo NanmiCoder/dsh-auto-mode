@@ -213,6 +213,11 @@ describe('real Cordis Loader composition', () => {
     expect(childEscalation.content).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('[auto-mode delegated escalation denied]') }),
     ]))
+    // The child gets per-call guidance too: a widening it cannot have must be
+    // reported to the parent rather than reached by another route.
+    expect(childEscalation.additionalContexts?.[0]).toMatchObject({
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_DELEGATED_DENIAL_RECOVERY_CONTEXT }],
+    })
     expect(bodyCalls).toBe(5)
     expect(ordinaryPluginBodyCalls).toBe(1)
     expect(riskyPluginBodyCalls).toBe(0)

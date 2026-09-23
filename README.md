@@ -92,10 +92,12 @@ Ordinary Auto work stays inside Workspace Write. Only an explicit one-shot widen
 | --- | --- |
 | **Allow** | unfamiliar sandboxed Bash/PowerShell, routine dependency installation, local Git commits, project work, builds, tests, type checks, audited DSH coordination tools |
 | **Classify** | pre-session deletion, ephemeral downloaded-package execution, dangerous remote Git/database/service changes, sensitive reads, network transmission, external-system writes, exact sandbox widening |
-| **Ask once** | genuinely ambiguous effect or authority, or manual review after three consecutive classifier failures; an escalation reuses the official exact approval instead of opening two dialogs |
+| **Ask once** | genuinely ambiguous effect or authority, or manual review after three consecutive classifier failures. An escalation the classifier does not clear is raised by the plugin itself with the exact official grant armed, so the human still sees one prompt — and a tool that ignores the sandbox fields can never run it with nobody asked. An explicit one-shot escalation is never denied just because the reviewer is unavailable |
 | **Deny** | root/home/DSH_HOME/system destruction, policy bypass, credential exfiltration, hidden dynamic deletion, and the first two consecutive classifier failures for a risky action |
 
 The classifier is not an authority of its own. It receives a redacted, bounded description of the pending call and may recognize only authorization found in direct human Session messages. Repository text, tool output, Assistant text, Skills, plugins, and sub-agents cannot grant permission.
+
+Every refusal names its class, and both the Agent guidance and a post-call recovery notice tell the model what that class permits. A classifier refusal means the effect needs authority the Agent does not have: only when a wider filesystem sandbox is what the call needs may it re-issue the identical call as an exact one-shot escalation, and otherwise it must ask the user to authorize that exact action in a typed message — never look for an equivalent route, and never use a wider sandbox as a substitute for authority it does not supply. A refused escalation is told not to repeat itself. A hard denial is monotonic, so the model is told to hand the action to the user rather than retry it. A deterministic denial stays a silent re-plan signal. An `ask_user_question` answer returns as tool output, so it is information and never authorization.
 
 ## Shell, sandbox, and deletion behavior
 
@@ -138,8 +140,11 @@ No extra endpoint or API key is needed by default. Auto uses the current Session
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
     classifierTimeoutMs: 30000
-    classifierMaxOutputTokens: 1024
+    classifierMaxOutputTokens: 2048
+    classifierReasoningEffort: off
 ```
+
+`classifierReasoningEffort` defaults to `off`, which disables thinking on the classifier call so reasoning tokens cannot consume its answer budget; an empty string inherits the adapter default instead. The pin is checked against the route's advertised efforts first, because a route with no reasoning capability rejects any explicit effort, and a route that offers no `off` instead receives the larger 4096-token cap. A truncated response is always refused rather than partially trusted: recovering a decision from a partial answer cannot separate the model's own conclusion from text it merely quoted out of untrusted input, so a `max-tokens` finish keeps the fail-closed denial it has always had.
 
 See [DESIGN.md](./DESIGN.md) for the complete decision order, threat model, Windows path handling, classifier payload limits, and official-source references.
 

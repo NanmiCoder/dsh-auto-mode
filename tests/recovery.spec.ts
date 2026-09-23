@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId, type GenerateOptions, type StreamChunk, type ToolSchema } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk, type ToolSchema } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import { approveEscalation } from '@deepseek-ai/dsh-sandbox'
 import ToolRuntime, { defineTool, type PreToolDecision, type ToolExecutionInput, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import * as AutoMode from '../src/index.js'
 import { provideTestPermissionPresets } from './harness.js'
@@ -29,6 +30,10 @@ function bashQuote(value: string): string {
 /** Deterministic stand-in for the independent model classifier. */
 function classifierDecision(input: ClassifierInput): ClassifierDecision {
   const command = (input.arguments as { command?: string } | undefined)?.command ?? ''
+  // A file-tool call has no shell command: the reviewer cannot clear it on its own.
+  if (command === '') return { decision: 'ask', reason: 'this call needs a human decision' }
+  if (command.includes('ask-me')) return { decision: 'ask', reason: 'this escalation needs a human decision' }
+  if (command.includes('deny-me')) return { decision: 'deny', reason: 'no trusted user message authorizes this escalation' }
   const match = /rm -rf (?:'([^']*)'|(\S+))/.exec(command)
   const deletion = match?.[1] ?? match?.[2]
   if (deletion === undefined) return { decision: 'allow', reason: 'routine development command' }
@@ -39,6 +44,7 @@ function classifierDecision(input: ClassifierInput): ClassifierDecision {
 }
 
 interface Harness {
+  readonly context: Context
   readonly canary: string
   readonly dshHome: string
   readonly workspace: string
@@ -47,14 +53,21 @@ interface Harness {
   readonly approvalRequests: readonly unknown[]
   readonly commands: readonly string[]
   readonly results: readonly ToolExecutionResult[]
+  readonly grantedModes: readonly unknown[]
+  readonly readTargets: readonly string[]
+  readonly agentFor: (userMessages: readonly string[]) => NonNullable<ToolExecutionInput['agent']>
   autoGuidance(userMessages: readonly string[]): Promise<string | undefined>
   modelTools(userMessages: readonly string[]): Promise<readonly ToolSchema[]>
   run(id: string, command: string, userMessages: readonly string[], sandboxArguments?: Record<string, unknown>): Promise<PreToolDecision>
   runTool(name: ToolExecutionInput['name'], id: string, command: string, userMessages: readonly string[], sandboxArguments?: Record<string, unknown>): Promise<PreToolDecision>
+  runArguments(name: ToolExecutionInput['name'], id: string, args: Record<string, unknown>, userMessages: readonly string[]): Promise<PreToolDecision>
   dispose(): Promise<void>
 }
 
-async function createHarness(options: { failClassifier?: boolean } = {}): Promise<Harness> {
+/** The composed approval answer, mirroring `ctx.approval.request`'s outcome vocabulary. */
+type ApprovalAnswer = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+
+async function createHarness(options: { failClassifier?: boolean; approvalAnswer?: ApprovalAnswer } = {}): Promise<Harness> {
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-auto-mode-workspace-'))
   const scratch = await mkdtemp(join(tmpdir(), 'dsh-auto-mode-scratch-'))
   const dshHome = join(await mkdtemp(join(tmpdir(), 'dsh-auto-mode-home-')), '.dsh')
@@ -67,10 +80,26 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
   const approvalRequests: unknown[] = []
   const commands: string[] = []
   const results: ToolExecutionResult[] = []
+  const grantedModes: unknown[] = []
+  const readTargets: string[] = []
   const context = new Context()
   provideTestPermissionPresets(context)
   context.provide('agents', { get: () => undefined })
+  // A composed approval service. It routes through the `approval/request` event
+  // exactly as the real service does, so the plugin's exact-grant listener is the
+  // interception point and an armed grant can resolve an escalation without a
+  // second prompt. The answer itself is scripted.
+  context.provide('approval', {
+    async request(request: unknown) {
+      return context.waterfall(context, 'approval/request', request, () => Promise.resolve(options.approvalAnswer ?? 'rejected'))
+    },
+  })
   context.provide('llm', {
+    // The real service always resolves exact-route capabilities, so the composed
+    // path must exercise the probe branch rather than only the stream seam.
+    async resolveModelInfo() {
+      return { reasoning: { efforts: [{ id: 'off' }, { id: 'high' }] } } as unknown as LlmResolvedModelInfo
+    },
     stream(generate: GenerateOptions): AsyncIterable<StreamChunk> {
       const block = generate.messages[0]?.content[0]
       const input = JSON.parse(block?.type === 'text' ? block.text : '{}') as ClassifierInput
@@ -118,7 +147,28 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
       schema: { type: 'object', additionalProperties: false, properties: { exitCode: { type: 'number', required: true } } },
       render: () => [{ type: 'text', text: 'ok' }],
     },
-    async execute(args: { command: string; sandbox_permissions?: string; justification?: string }) {
+    async execute(
+      args: { command: string; sandbox_permissions?: string; justification?: string },
+      exec: { agent?: unknown; callId?: unknown; signal?: AbortSignal },
+    ) {
+      if (args.sandbox_permissions === 'danger-full-access') {
+        // The official bash body's own escalation path, verbatim: the shared
+        // fail-closed sequence in `@deepseek-ai/dsh-sandbox` owns strict-widening
+        // validation and outcome mapping, and it asks through `ctx.approval`.
+        const granted = await approveEscalation({
+          requestedMode: args.sandbox_permissions,
+          justification: args.justification ?? '',
+          effectiveMode: 'workspace-write',
+          subject: 'command',
+        }, {
+          approver: context.get('approval'),
+          agent: exec.agent,
+          callId: exec.callId,
+          toolName: 'bash',
+          signal: exec.signal,
+        } as never)
+        grantedModes.push(granted)
+      }
       commands.push(args.command)
       return { exitCode: 0 }
     },
@@ -137,6 +187,27 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     },
     async execute() {
       return { exitCode: 0 }
+    },
+  }))
+  // A tool that has no escalation seam at all: it ignores the sandbox fields the
+  // way the official `read` tool does, so an inert escalation argument must never
+  // be able to carry it past a failed reviewer.
+  context.tools.register(defineTool({
+    name: 'read',
+    description: 'Records the requested path instead of reading it.',
+    parameters: {
+      file_path: { type: 'string', required: true },
+      sandbox_permissions: { type: 'string' },
+      justification: { type: 'string' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean', required: true } } },
+      render: () => [{ type: 'text', text: 'file contents' }],
+    },
+    async execute(args: { file_path: string }) {
+      readTargets.push(args.file_path)
+      if (args.file_path.includes('fail-on-purpose')) throw new Error('unrelated body failure after an approved call')
+      return { ok: true }
     },
   }))
 
@@ -168,25 +239,33 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     return agent
   }
 
-  const runTool = async (
+  const runArguments = async (
     name: ToolExecutionInput['name'],
     id: string,
-    command: string,
+    args: Record<string, unknown>,
     userMessages: readonly string[],
-    sandboxArguments?: Record<string, unknown>,
   ): Promise<PreToolDecision> => {
     decision = undefined
     await context.tools.execute({
       callId: ToolCallId(id),
       name,
-      arguments: { command, ...sandboxArguments },
+      arguments: args,
       agent: agentFor(userMessages),
       signal: new AbortController().signal,
     })
     return decision as PreToolDecision
   }
 
+  const runTool = (
+    name: ToolExecutionInput['name'],
+    id: string,
+    command: string,
+    userMessages: readonly string[],
+    sandboxArguments?: Record<string, unknown>,
+  ): Promise<PreToolDecision> => runArguments(name, id, { command, ...sandboxArguments }, userMessages)
+
   return {
+    context,
     canary,
     dshHome,
     workspace,
@@ -195,6 +274,9 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     approvalRequests,
     commands,
     results,
+    grantedModes,
+    readTargets,
+    agentFor,
     async autoGuidance(userMessages) {
       return (await context.systemPrompt.assemble({ agent: agentFor(userMessages) })).contexts
         .find(item => item.name === 'auto-mode:policy')?.text
@@ -202,6 +284,7 @@ async function createHarness(options: { failClassifier?: boolean } = {}): Promis
     async modelTools(userMessages) {
       return (await context.systemPrompt.assemble({ agent: agentFor(userMessages) })).tools
     },
+    runArguments,
     runTool,
     async run(id, command, userMessages, sandboxArguments) {
       return runTool('bash', id, command, userMessages, sandboxArguments)
@@ -385,7 +468,333 @@ describe('sandbox recovery from PR #11', () => {
       requestedMode: 'danger-full-access',
       justification: 'write the explicitly requested target ' + target,
     })
+    // The classified allow plans one exact grant, so the official approval
+    // request for this same call resolves without asking and the body runs.
+    // Paired with the reviewer-failure case, this pins that only an allow grants.
+    expect(active.grantedModes).toEqual(['danger-full-access'])
     expect(active.commands).toEqual([command])
   })
 
+})
+
+/**
+ * The two refusal classes must send the agent somewhere it can actually go.
+ *
+ * A reviewer denial needs authority, so the agent is told to escalate the exact
+ * call or ask the user for a typed authorization. A monotonic hard denial cannot
+ * be unlocked by anyone, so the agent is told to hand the action to the user
+ * instead of hunting for a workaround. A deterministic denial stays a silent
+ * re-plan signal by design, so it must NOT gain a stop-and-ask notice.
+ */
+describe('refusal recovery guidance', () => {
+  it('attaches an authority-recovery notice after a reviewer denial', async () => {
+    const active = harness as Harness
+    const command = 'rm -rf ' + bashQuote(active.canary) + ' && echo removed'
+    const decision = await active.run('classifier-denied', command, ['请帮我整理一下项目目录结构。'])
+
+    expect(decision).toMatchObject({ kind: 'deny' })
+    expect((decision as { reason: string }).reason).toContain('[auto-mode classifier deny]')
+    const result = active.results[active.results.length - 1]
+    expect(result?.additionalContexts).toHaveLength(1)
+    expect(result?.additionalContexts?.[0]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_DENIAL_RECOVERY_CONTEXT }],
+      source: {
+        kind: 'plugin',
+        plugin: AutoMode.name,
+        form: 'notice',
+        summary: 'Auto Mode refused this call for lack of authority.',
+      },
+    })
+  })
+
+  it('attaches the same recovery notice when the reviewer is unavailable', async () => {
+    const failing = await createHarness({ failClassifier: true })
+    try {
+      const command = 'rm -rf ' + bashQuote(failing.canary) + ' && echo removed'
+      const decision = await failing.run('reviewer-unavailable', command, ['我明确授权删除 ' + failing.canary + '。'])
+
+      expect(decision).toMatchObject({ kind: 'deny' })
+      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier unavailable; action denied]')
+      expect(failing.results[failing.results.length - 1]?.additionalContexts?.[0]).toMatchObject({
+        content: [{ type: 'text', text: AutoMode.AUTO_MODE_DENIAL_RECOVERY_CONTEXT }],
+      })
+    } finally {
+      await failing.dispose()
+    }
+  })
+
+  it('asks the user itself when the reviewer is unavailable and an escalation is requested', async () => {
+    const failing = await createHarness({ failClassifier: true })
+    try {
+      const target = join(failing.scratch, 'widened.txt')
+      const command = 'printf widened > ' + bashQuote(target)
+      const userMessages = ['请把结果写入 ' + target + '。']
+      const justification = 'write the explicitly requested target ' + target
+      const decision = await failing.run('reviewer-unavailable-widening', command, userMessages, {
+        sandbox_permissions: 'danger-full-access',
+        justification,
+      })
+
+      // The plugin raises the approval itself instead of delegating to the tool
+      // body. Only some tools implement the official escalation seam, so trusting
+      // an argument shape would let any classifier-eligible call through with
+      // nobody asked. The composed approver here declines, so nothing runs.
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect((decision as { reason: string }).reason)
+        .toContain('manual approval required for this exact danger-full-access escalation')
+      expect(failing.classifierCalls).toHaveLength(1)
+      expect(failing.approvalRequests).toHaveLength(1)
+      expect(failing.approvalRequests[0]).toMatchObject({ toolName: 'bash' })
+      expect(failing.commands).toEqual([])
+      expect(failing.results[failing.results.length - 1]).toMatchObject({
+        isError: true,
+        error: { message: expect.stringContaining('the user rejected') },
+      })
+      // The escalation was declined, so nothing runs and no refusal notice is
+      // attached: an ask a human decided is not a refusal, and the harness's own
+      // "the user rejected" error already says what to do.
+      expect(failing.results[failing.results.length - 1]?.additionalContexts).toBeUndefined()
+      expect(failing.grantedModes).toEqual([])
+    } finally {
+      await failing.dispose()
+    }
+  })
+
+  it('never lets inert sandbox fields turn a reviewer ask into silent execution', async () => {
+    const active = await createHarness()
+    try {
+      // The reviewer verdict is "ask", so a human must decide. Trusting the tool
+      // body to raise that request would let a tool that never consumes the
+      // sandbox fields run the call with nobody asked at all.
+      const sensitive = join(homedir(), '.ssh', 'id_' + 'rsa')
+      const decision = await active.runArguments('read', 'ask-plus-inert-fields', {
+        file_path: sensitive,
+        sandbox_permissions: 'danger-full-access',
+        justification: 'read one unrelated sensitive file',
+      }, ['帮我看看这个文件。'])
+
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect(active.readTargets).toEqual([])
+      expect(active.results[active.results.length - 1]).toMatchObject({ isError: true })
+      expect(active.approvalRequests).toHaveLength(1)
+    } finally {
+      await active.dispose()
+    }
+  })
+
+  it('asks the same way whether or not an ignored escalation argument was attached', async () => {
+    const active = await createHarness()
+    try {
+      const sensitive = join(homedir(), '.ssh', 'id_' + 'rsa')
+      const decision = await active.runArguments('read', 'ask-without-inert-fields', {
+        file_path: sensitive,
+      }, ['帮我看看这个文件。'])
+
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect(active.readTargets).toEqual([])
+      expect(active.approvalRequests).toHaveLength(1)
+    } finally {
+      await active.dispose()
+    }
+  })
+
+  it('raises exactly one approval for an escalation when the reviewer is unavailable', async () => {
+    const approving = await createHarness({ failClassifier: true, approvalAnswer: 'allowed-once' })
+    try {
+      const target = join(approving.scratch, 'widened.txt')
+      const command = 'printf widened > ' + bashQuote(target)
+      const userMessages = ['请把结果写入 ' + target + '。']
+      const justification = 'write the explicitly requested target ' + target
+      const decision = await approving.run('reviewer-unavailable-widening-approved', command, userMessages, {
+        sandbox_permissions: 'danger-full-access',
+        justification,
+      })
+
+      expect(decision).toMatchObject({ kind: 'ask' })
+      // One human decision, not two: the plugin's ask is the only prompt, and the
+      // exact grant it armed resolves the tool body's own escalation request.
+      // Without that grant the body would ask again and this would be 2.
+      expect(approving.approvalRequests).toHaveLength(1)
+      expect(approving.grantedModes).toEqual(['danger-full-access'])
+      expect(approving.commands).toEqual([command])
+      expect(approving.results[approving.results.length - 1]?.isError).toBeFalsy()
+      expect(approving.results[approving.results.length - 1]?.additionalContexts).toBeUndefined()
+    } finally {
+      await approving.dispose()
+    }
+  })
+
+  it('never lets inert sandbox fields carry a tool with no escalation seam past a failed reviewer', async () => {
+    const failing = await createHarness({ failClassifier: true })
+    try {
+      // The official `read` tool ignores `sandbox_permissions` entirely and never
+      // requests approval, so an unapproved hand-off here would execute a
+      // sensitive read outside the workspace with no human in the loop.
+      const sensitive = join(homedir(), '.ssh', 'id_' + 'rsa')
+      const decision = await failing.runArguments('read', 'inert-escalation', {
+        file_path: sensitive,
+        sandbox_permissions: 'danger-full-access',
+        justification: 'read one unrelated sensitive file',
+      }, ['帮我看看这个文件。'])
+
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect(failing.readTargets).toEqual([])
+      expect(failing.results[failing.results.length - 1]).toMatchObject({ isError: true })
+      expect(failing.approvalRequests).toHaveLength(1)
+    } finally {
+      await failing.dispose()
+    }
+  })
+
+  it('runs a tool with no escalation seam behind inert sandbox fields only when the human approves', async () => {
+    const approving = await createHarness({ failClassifier: true, approvalAnswer: 'allowed-once' })
+    try {
+      const sensitive = join(homedir(), '.ssh', 'id_' + 'rsa')
+      const decision = await approving.runArguments('read', 'inert-escalation-approved', {
+        file_path: sensitive,
+        sandbox_permissions: 'danger-full-access',
+        justification: 'read one unrelated sensitive file',
+      }, ['帮我看看这个文件。'])
+
+      // The gate is a real human prompt, not a blanket denial of the tool.
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect(approving.readTargets).toEqual([sensitive])
+    } finally {
+      await approving.dispose()
+    }
+  })
+
+  it('withholds every refusal notice from an approved call that later failed on its own', async () => {
+    const approving = await createHarness({ failClassifier: true, approvalAnswer: 'allowed-once' })
+    try {
+      // The human approved the escalation, so whatever the tool body does next is
+      // not a refusal and must not be reported as one.
+      const sensitive = join(homedir(), '.ssh', 'fail-on-purpose', 'id_' + 'rsa')
+      await approving.runArguments('read', 'approved-then-failed', {
+        file_path: sensitive,
+        sandbox_permissions: 'danger-full-access',
+        justification: 'read one unrelated sensitive file',
+      }, ['帮我看看这个文件。'])
+
+      const result = approving.results[approving.results.length - 1]
+      expect(result).toMatchObject({ isError: true, error: { message: 'unrelated body failure after an approved call' } })
+      expect(result?.additionalContexts).toBeUndefined()
+    } finally {
+      await approving.dispose()
+    }
+  })
+
+  it('fails closed when the composed approval channel is unavailable', async () => {
+    const unavailable = await createHarness({ failClassifier: true, approvalAnswer: 'unavailable' })
+    try {
+      const target = join(unavailable.scratch, 'widened.txt')
+      const command = 'printf widened > ' + bashQuote(target)
+      await unavailable.run('reviewer-unavailable-channel-lost', command, [
+        '请把结果写入 ' + target + '。',
+      ], {
+        sandbox_permissions: 'danger-full-access',
+        justification: 'write the explicitly requested target ' + target,
+      })
+
+      expect(unavailable.commands).toEqual([])
+      expect(unavailable.results[unavailable.results.length - 1]).toMatchObject({
+        isError: true,
+        error: { message: expect.stringContaining('no approval channel is available') },
+      })
+      expect(unavailable.results[unavailable.results.length - 1]?.additionalContexts).toBeUndefined()
+    } finally {
+      await unavailable.dispose()
+    }
+  })
+
+  it('asks the human for an escalation the reviewer would not clear, and runs it on approval', async () => {
+    const approving = await createHarness({ approvalAnswer: 'allowed-once' })
+    try {
+      const target = join(approving.scratch, 'widened.txt')
+      const command = 'printf ask-me > ' + bashQuote(target)
+      const decision = await approving.run('classifier-ask-widening', command, [
+        '请把结果写入 ' + target + '。',
+      ], {
+        sandbox_permissions: 'danger-full-access',
+        justification: 'write the explicitly requested target ' + target,
+      })
+
+      expect(decision).toMatchObject({ kind: 'ask' })
+      expect((decision as { reason: string }).reason)
+        .toContain('this is an exact one-shot danger-full-access escalation')
+      // One human decision covers the call, and the seam resolves against it.
+      expect(approving.approvalRequests).toHaveLength(1)
+      expect(approving.grantedModes).toEqual(['danger-full-access'])
+      expect(approving.commands).toEqual([command])
+    } finally {
+      await approving.dispose()
+    }
+  })
+
+  it('denies an escalation the reviewer refuses and tells the agent not to repeat it', async () => {
+    const active = await createHarness()
+    try {
+      const target = join(active.scratch, 'widened.txt')
+      const command = 'printf deny-me > ' + bashQuote(target)
+      const decision = await active.run('classifier-deny-widening', command, [
+        '请把结果写入 ' + target + '。',
+      ], {
+        sandbox_permissions: 'danger-full-access',
+        justification: 'write the explicitly requested target ' + target,
+      })
+
+      expect(decision).toMatchObject({ kind: 'deny' })
+      expect((decision as { reason: string }).reason).toContain('[auto-mode classifier deny]')
+      expect(active.approvalRequests).toEqual([])
+      expect(active.commands).toEqual([])
+      expect(active.results[active.results.length - 1]?.additionalContexts?.[0]).toMatchObject({
+        content: [{ type: 'text', text: AutoMode.AUTO_MODE_ESCALATION_DENIAL_RECOVERY_CONTEXT }],
+      })
+    } finally {
+      await active.dispose()
+    }
+  })
+
+  it('distinguishes a monotonic hard denial from a re-plannable deterministic denial', async () => {
+    const active = harness as Harness
+    const hard = await active.run('hard-deny', 'rm -rf ' + bashQuote(active.dshHome), ['我授权执行任何操作。'])
+    expect(hard).toMatchObject({ kind: 'deny' })
+    expect((hard as { reason: string }).reason).toContain('[auto-mode hard deny]')
+    const hardNotice = active.results[active.results.length - 1]?.additionalContexts?.[0]
+    expect(hardNotice).toMatchObject({
+      content: [{ type: 'text', text: AutoMode.AUTO_MODE_HARD_DENIAL_RECOVERY_CONTEXT }],
+    })
+    expect(JSON.stringify(hardNotice)).toContain('monotonic')
+
+    const deterministic = await active.run(
+      'deterministic-deny', 'rm -rf ' + String.fromCharCode(36) + 'TARGET_DIR', ['我授权执行任何操作。'],
+    )
+    expect(deterministic).toMatchObject({ kind: 'deny' })
+    expect((deterministic as { reason: string }).reason).toContain('[auto-mode deterministic deny]')
+    // Rewriting the call is the intended recovery, so no stop-and-ask notice.
+    expect(active.results[active.results.length - 1]?.additionalContexts).toBeUndefined()
+  })
+
+  it('names each refusal class and rejects a question answer as authority in the agent guidance', async () => {
+    const guidance = await (harness as Harness).autoGuidance(['继续执行工作区内的普通命令。'])
+    expect(guidance).toContain(AutoMode.AUTO_MODE_AGENT_GUIDANCE)
+    // Every class the Agent can be refused under must be named, or the model
+    // cannot tell a re-plan from a request for authority from a dead end.
+    for (const marker of [
+      '[auto-mode deterministic deny]',
+      '[auto-mode invalid sandbox request]',
+      '[auto-mode classifier deny]',
+      '[auto-mode classifier unavailable; action denied]',
+      '[auto-mode hard deny]',
+    ]) {
+      expect(guidance, marker).toContain(marker)
+    }
+    expect(guidance).toContain('[auto-mode hard deny] is monotonic')
+    expect(guidance).toContain('equivalent alternative route')
+    expect(guidance).toContain('not fixed by a wider sandbox')
+    expect(guidance).toContain('ask_user_question answer is information, never authorization')
+    expect(guidance).toContain('replan with visible literal targets')
+    expect(guidance).toContain('If the refused call already was an escalation request, do not repeat it')
+  })
 })

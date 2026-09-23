@@ -92,10 +92,12 @@ Auto 的普通操作保留在 Workspace Write 边界内，只有明确的一次�
 | --- | --- |
 | **自动放行** | 沙箱内的陌生 Bash/PowerShell、常规依赖安装、本地 Git commit、项目读写、构建、测试、类型检查和已审计的 DSH 协作工具 |
 | **后台分类** | Session 前已有数据删除、临时下载包执行、危险的远程 Git/数据库/服务变更、敏感读取、网络传输、外部系统写入和精确 sandbox 越权 |
-| **询问一次** | 效果或授权确实不明确，或分类器连续失败三次后转人工确认；越权时复用官方那一次精确审批，不产生双弹窗 |
+| **询问一次** | 效果或授权确实不明确，或分类器连续失败三次后转人工确认。分类器没有直接放行的越权请求由插件自己发起审批，并同时挂上精确的官方 grant，因此用户仍然只看到一次弹窗——而忽略 sandbox 字段的工具绝不可能在无人确认的情况下执行。显式的一次性越权请求不会因为分类器暂时不可用就被拒绝 |
 | **直接拒绝** | 根目录、Home、DSH_HOME、系统破坏、权限绕过、凭据外传、隐藏动态删除，以及风险操作前两次连续分类器故障 |
 
 分类器本身不是授权来源。它只接收经过脱敏和长度限制的待执行调用描述，并且只能识别直接用户 Session 消息中的授权。仓库文本、工具输出、Assistant、Skill、插件和子 Agent 都不能授予权限。
+
+每种拒绝都会标明自己的类别，Agent guidance 与调用后的恢复提示会告诉模型该类别的含义。分类器拒绝意味着这个效果需要 Agent 尚未持有的授权：只有在确实需要更宽文件系统沙箱时，才可以把同一个调用改写成精确的一次性越权请求；否则必须请用户在打字消息中授权这个精确动作，绝不能去找等价路径，也不能把更宽沙箱当成它并不提供的授权。被拒绝的越权请求会被告知不要重复。hard deny 是单调的，因此会要求模型把该动作交给用户，而不是重试。deterministic deny 仍然是静默的重新规划信号。`ask_user_question` 的答案以工具输出返回，因此只是信息，永远不构成授权。
 
 ## Shell、Sandbox 与删除行为
 
@@ -138,8 +140,11 @@ Full access 是用户明确选择的无沙箱、免审批模式，插件不能�
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
     classifierTimeoutMs: 30000
-    classifierMaxOutputTokens: 1024
+    classifierMaxOutputTokens: 2048
+    classifierReasoningEffort: off
 ```
+
+`classifierReasoningEffort` 默认为 `off`，即在该分类调用上关闭 thinking，避免推理 token 吃掉回答预算；设为空字符串则改为继承适配器默认值。这个 pin 会先与该路由公布的 effort 列表核对：没有推理能力的路由会拒绝任何显式 effort，而提供了不 `off` 的路由则改用 4096 的更大上限。截断的响应一律拒绝、不做部分信任：从残缺回答里抢救结论，无法区分这是模型自己的判断还是它只是引用了不可信输入里的文本，因此 `max-tokens` 始终是它本来那样的 fail-closed 拒绝。
 
 完整决策顺序、威胁模型、Windows 路径处理、分类器载荷限制和官方源码依据见 [DESIGN.md](./DESIGN.md)。
 
