@@ -138,8 +138,11 @@ Full access 是用户明确选择的无沙箱、免审批模式，插件不能�
     classifierProvider: deepseek-official
     classifierModel: deepseek-v4-flash
     classifierTimeoutMs: 30000
-    classifierMaxOutputTokens: 1024
+    classifierMaxOutputTokens: 4096
+    classifierReasoningEffort: off
 ```
+
+`classifierReasoningEffort` 只作用于进程内的原生分类器；一旦设置了 `classifierEndpoint`，它会被接受但被忽略。它默认为 `off`：在真正遵守这个 pin 的适配器上，分类器不再把 provider 的算力花在推理 token 上；设为空字符串则改为继承适配器默认值。这个 pin 会先与该路由公布的 effort 列表核对；如果路由没有提供该 effort，会回退到 `off`，而不是让该路由上的每一次分类都失败；两者都没有时则不发送任何 effort。`classifierMaxOutputTokens` 默认为 4096 上限，且不接受更大的值：推理 token 与回答共用这个上限，而没有任何路由能被证明已关闭 thinking——pi-ai 适配器把 `off` 公布在 effort 列表里，却把它翻译成*省略* reasoning 选项，因此一个默认就会思考的 provider 在选中 `off` 后仍会思考。所以调小这个上限就等于主动承担下面那种截断拒绝的风险。截断的响应一律拒绝、不做部分信任：从残缺回答里抢救结论，无法区分这是模型自己的判断还是它只是引用了不可信输入里的文本，因此 `max-tokens` 始终是它本来那样的 fail-closed 拒绝。
 
 完整决策顺序、威胁模型、Windows 路径处理、分类器载荷限制和官方源码依据见 [DESIGN.md](./DESIGN.md)。
 
