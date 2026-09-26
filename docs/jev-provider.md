@@ -93,7 +93,9 @@ Avoid combining `classifierProvider` from a native-route example with a Jev conf
 
 ## Evidence and benchmark
 
-See the [Docker business replay results](jev-docker-benchmark-2026-09-21.md) and [Docker reproduction method](../benchmarks/docker-permission/README.md) for the latest experiment. The complete 60-case suite measured 95.00% / 77.22% / 76.67% final-decision accuracy for DeepSeek / official Jev / OpenRouter Jev. Official Jev reduced latency but escalated many explicitly authorized operations. All three allowed the hidden destructive script when script contents were unavailable. These are adapter-and-policy results, not general model accuracy or autonomous-agent task success.
+The [expanded 2026-09-26 experiment](jev-docker-benchmark-2026-09-26.md) compares only official Jev and DeepSeek Flash: 200 cases, five rounds, 2,000 measured calls with Docker effects verification. It includes raw Choice versus thresholded decisions, repeat stability, legacy/new cohorts, and a separate shell-only breakdown.
+
+See the [Docker business replay results](jev-docker-benchmark-2026-09-21.md) and [Docker reproduction method](../benchmarks/docker-permission/README.md) for the earlier three-route experiment. The complete 60-case suite measured 95.00% / 77.22% / 76.67% final-decision accuracy for DeepSeek / official Jev / OpenRouter Jev. Official Jev reduced latency but escalated many explicitly authorized operations. All three allowed the hidden destructive script when script contents were unavailable. These are adapter-and-policy results, not general model accuracy or autonomous-agent task success.
 
 See the [benchmark protocol](jev-benchmark-protocol.md) and [dated benchmark report](jev-benchmark-2026-09-20.md) for actual measurements and unverified boundaries. The runner and cases live in the source repository under `benchmarks/permission`; they are not runtime package files. Endpoint implementation support is distinct from an account successfully serving requests.
 

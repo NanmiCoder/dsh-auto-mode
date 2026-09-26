@@ -13,7 +13,25 @@
 </p>
 
 > [!NOTE]
-> **Jev experimental branch: `experiment/jev-provider`.** Default behavior still uses your Harness model. To try Jev, build this branch using the [installation and configuration guide](docs/jev-provider.md) ([中文指南](docs/jev-quickstart.zh-CN.md)); the npm installation below does not install this branch. Official and OpenRouter calls were tested on Harness `0.1.5-rc.1`; Vercel inference remains unverified because the account requires billing verification. Read the [Docker benchmark results and limitations](docs/jev-docker-benchmark-2026-09-21.md) before evaluating the option.
+> **Jev experimental branch: `experiment/jev-provider`.** Default behavior still uses your Harness model. To try Jev, build this branch using the [installation and configuration guide](docs/jev-provider.md) ([中文指南](docs/jev-quickstart.zh-CN.md)); the npm installation below does not install this branch. Official and OpenRouter calls were tested on Harness `0.1.5-rc.1`; Vercel inference remains unverified because the account requires billing verification. Read the [Docker benchmark results and limitations](docs/jev-docker-benchmark-2026-09-26.md) before evaluating the option.
+
+## Latest Jev experiment: 2026-09-26
+
+**Official Jev vs DeepSeek Flash only**, with no OpenRouter calls: 200 constructed business cases in 125 families, repeated five times per provider, yielding **2,000 real model decisions and Docker effect checks**, plus 400 execute/block controls.
+
+| Current plugin configuration | Correct / total | Accuracy | p50 latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: |
+| DeepSeek Flash | 918 / 1000 | 91.80% | 976 ms | 2282 ms |
+| Official Jev | 825 / 1000 | 82.50% | 279 ms | 458 ms |
+
+Jev's median paired speedup was **3.36×**. On information-sufficient legitimate operations, DeepSeek completed 480/480 automatically and Jev completed 332/480. Scores measure final adapter decisions with the 0.90 allow threshold, not general model capability: Jev's raw Choice scored 90.30% offline, but removing the threshold would increase unsafe allows. Both providers missed hidden destructive script behavior.
+
+Five repeats are not five independent datasets. This constructed business replay does not estimate production error rates or autonomous-agent task success. The default remains the native Harness model; Jev is an optional configuration.
+
+- [Full results, per-round metrics, confidence intervals and limitations](docs/jev-docker-benchmark-2026-09-26.md)
+- [Experiment design, Docker isolation and reproduction commands](benchmarks/docker-permission-v3/README.md)
+- [Per-case measurements](docs/jev-docker-benchmark-2026-09-26.measurements.json) · [Statistical summary](docs/jev-docker-benchmark-2026-09-26.summary.json)
+- [Provider configuration](docs/jev-provider.md)
 
 ## Why Auto?
 

@@ -13,7 +13,25 @@
 </p>
 
 > [!NOTE]
-> **Jev 实验分支：`experiment/jev-provider`。** 默认仍使用 Harness 原来的模型。体验 Jev 请按[独立安装与配置指南](docs/jev-quickstart.zh-CN.md)构建这个分支；下方 npm 安装命令不会安装此分支。官方和 OpenRouter 已在 Harness `0.1.5-rc.1` 真实调用验证，Vercel 因账号账单验证要求尚未完成推理验证。实测收益与限制见 [Docker benchmark 报告](docs/jev-docker-benchmark-2026-09-21.md)。
+> **Jev 实验分支：`experiment/jev-provider`。** 默认仍使用 Harness 原来的模型。体验 Jev 请按[独立安装与配置指南](docs/jev-quickstart.zh-CN.md)构建这个分支；下方 npm 安装命令不会安装此分支。官方和 OpenRouter 已在 Harness `0.1.5-rc.1` 真实调用验证，Vercel 因账号账单验证要求尚未完成推理验证。实测收益与限制见 [Docker benchmark 报告](docs/jev-docker-benchmark-2026-09-26.md)。
+
+## 最新 Jev 实验：2026-09-26
+
+仅比较 **官方 Jev 与 DeepSeek Flash**，未调用 OpenRouter。200 个构造业务案例、125 个案例组，每家重复 5 轮，共 **2,000 次真实模型判断及 Docker 效果验证**，另有 400 次执行／阻止对照。
+
+| 当前插件配置 | 正确 / 总数 | 准确率 | p50 延迟 | p95 延迟 |
+| --- | ---: | ---: | ---: | ---: |
+| DeepSeek Flash | 918 / 1000 | 91.80% | 976 ms | 2282 ms |
+| 官方 Jev | 825 / 1000 | 82.50% | 279 ms | 458 ms |
+
+Jev 同题配对中位加速约 **3.36 倍**；信息充分的合法操作中，DeepSeek 自动完成 480/480 次，Jev 为 332/480 次。这里统计包含 0.90 放行阈值的最终决策，不是模型通用能力：Jev 原始 Choice 的离线得分为 90.30%，但直接取消阈值会增加误放行。隐藏危险脚本仍被两家漏判。
+
+五轮重复不是五套独立案例；这套人工构造业务回放不代表生产错误率或自主 Agent 任务成功率。默认继续使用 Harness 原有模型，Jev 保留为可配置选项。
+
+- [完整结果、分轮数据、置信区间与限制](docs/jev-docker-benchmark-2026-09-26.md)
+- [实验设计、Docker 隔离与复现命令](benchmarks/docker-permission-v3/README.md)
+- [逐题测量数据](docs/jev-docker-benchmark-2026-09-26.measurements.json) · [统计汇总](docs/jev-docker-benchmark-2026-09-26.summary.json)
+- [安装与配置 Jev](docs/jev-quickstart.zh-CN.md)
 
 ## 为什么需要 Auto？
 
