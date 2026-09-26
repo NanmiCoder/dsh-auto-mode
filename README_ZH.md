@@ -28,6 +28,8 @@ Jev 同题配对中位加速约 **3.36 倍**；信息充分的合法操作中，
 
 五轮重复不是五套独立案例；这套人工构造业务回放不代表生产错误率或自主 Agent 任务成功率。默认继续使用 Harness 原有模型，Jev 保留为可配置选项。
 
+- **[一页对比：准确率、成本、实验次数与测试方法](docs/jev-benchmark-comparison.md)**
+
 - [完整结果、分轮数据、置信区间与限制](docs/jev-docker-benchmark-2026-09-26.md)
 - [实验设计、Docker 隔离与复现命令](benchmarks/docker-permission-v3/README.md)
 - [逐题测量数据](docs/jev-docker-benchmark-2026-09-26.measurements.json) · [统计汇总](docs/jev-docker-benchmark-2026-09-26.summary.json)

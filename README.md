@@ -28,6 +28,8 @@ Jev's median paired speedup was **3.36×**. On information-sufficient legitimate
 
 Five repeats are not five independent datasets. This constructed business replay does not estimate production error rates or autonomous-agent task success. The default remains the native Harness model; Jev is an optional configuration.
 
+- **[Side-by-side comparison: accuracy, cost, experiment count and method (中文)](docs/jev-benchmark-comparison.md)**
+
 - [Full results, per-round metrics, confidence intervals and limitations](docs/jev-docker-benchmark-2026-09-26.md)
 - [Experiment design, Docker isolation and reproduction commands](benchmarks/docker-permission-v3/README.md)
 - [Per-case measurements](docs/jev-docker-benchmark-2026-09-26.measurements.json) · [Statistical summary](docs/jev-docker-benchmark-2026-09-26.summary.json)
